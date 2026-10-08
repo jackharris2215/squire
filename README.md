@@ -44,6 +44,27 @@ need; `npm run dev` is only for development.
 
 ## Docker
 
+Create a `docker-compose.yml` next to the `Dockerfile` (this one is not kept in the repository,
+since it holds your password and token):
+
+```yaml
+services:
+  squire:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8765:8765"            # use "127.0.0.1:8765:8765" to keep it to this machine
+    environment:
+      - SQUIRE_PASSWORD=changeme   # the password the app asks for; change it
+      # Optional: tokens for the outside API (/api/). Leave both out and the API is off.
+      # - SQUIRE_API_READ_TOKEN=a-long-random-string
+      # - SQUIRE_API_TOKEN=another-long-random-string
+    volumes:
+      - ./notebook:/data/notebook  # notes, trash and settings
+```
+
+Then:
+
 ```sh
 docker compose up -d --build   # then open http://localhost:8765
 ```
