@@ -1,0 +1,22 @@
+{
+  "sidebarWidth": 209,
+  "sidebarCollapsed": false,
+  "lastOpenNote": null,
+  "bottomPanelHeightPercent": 30,
+  "bottomPanelCollapsed": false,
+  "sidebarTab": "files",
+  "bottomTab": "notebook",
+  "rightPanelWidth": 260,
+  "rightPanelCollapsed": true,
+  "recentNotes": [
+    "New Note.json"
+  ],
+  "layout": {
+    "root": {
+      "kind": "pane",
+      "path": null
+    },
+    "focused": 0
+  },
+  "lastSaved": 1791395339047
+}

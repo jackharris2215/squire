@@ -1,0 +1,167 @@
+/* color palette from <https://github.com/vuejs/theme> */
+:root {
+  --vt-c-white: #ffffff;
+  --vt-c-white-soft: #f8f8f8;
+  --vt-c-white-mute: #f2f2f2;
+
+  --vt-c-black: #181818;
+  --vt-c-black-soft: #222222;
+  --vt-c-black-mute: #282828;
+
+  --vt-c-indigo: #2c3e50;
+
+  --vt-c-divider-light-1: rgba(60, 60, 60, 0.29);
+  --vt-c-divider-light-2: rgba(60, 60, 60, 0.12);
+  --vt-c-divider-dark-1: rgba(84, 84, 84, 0.65);
+  --vt-c-divider-dark-2: rgba(84, 84, 84, 0.48);
+
+  --vt-c-text-light-1: var(--vt-c-indigo);
+  --vt-c-text-light-2: rgba(60, 60, 60, 0.66);
+  --vt-c-text-dark-1: var(--vt-c-white);
+  --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
+}
+
+/* semantic color variables for this project */
+:root {
+  --color-background: var(--vt-c-white);
+  --color-background-soft: var(--vt-c-white-soft);
+  --color-background-mute: var(--vt-c-white-mute);
+
+  --color-border: var(--vt-c-divider-light-2);
+  --color-border-hover: var(--vt-c-divider-light-1);
+
+  --color-heading: var(--vt-c-text-light-1);
+  --color-text: var(--vt-c-text-light-1);
+  --color-text-strong: var(--vt-c-text-light-1);
+
+  --section-gap: 160px;
+
+  /* The sidebar/right panel and the icon rails. */
+  --color-panel: #ebe7e0;
+  --color-rail: #dcd6cc;
+  /* The colour (as r g b) that faint lines and hover fills are drawn in: white on
+     dark, black on light. Used as rgb(var(--tint) / 0.08). */
+  --tint: 0 0 0;
+
+  /* The accent. The Appearance settings can replace it (appearance.ts). */
+  --color-accent: #7ac08b;
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 80%, white);
+  --color-on-accent: #1f2a22; /* text drawn on top of the accent */
+}
+
+/* Dark: chosen by the theme setting (data-theme, set by appearance.ts), or, until the
+   settings have loaded, by the system. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-background: var(--vt-c-black);
+    --color-background-soft: var(--vt-c-black-soft);
+    --color-background-mute: var(--vt-c-black-mute);
+
+    --color-border: var(--vt-c-divider-dark-2);
+    --color-border-hover: var(--vt-c-divider-dark-1);
+
+    --color-heading: var(--vt-c-text-dark-1);
+    --color-text: var(--vt-c-text-dark-2);
+    --color-text-strong: var(--vt-c-text-dark-1);
+
+    --color-panel: #3a342e;
+    --color-rail: #2e2a25;
+    --tint: 255 255 255;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-background: var(--vt-c-black);
+  --color-background-soft: var(--vt-c-black-soft);
+  --color-background-mute: var(--vt-c-black-mute);
+
+  --color-border: var(--vt-c-divider-dark-2);
+  --color-border-hover: var(--vt-c-divider-dark-1);
+
+  --color-heading: var(--vt-c-text-dark-1);
+  --color-text: var(--vt-c-text-dark-2);
+  --color-text-strong: var(--vt-c-text-dark-1);
+
+  --color-panel: #3a342e;
+  --color-rail: #2e2a25;
+  --tint: 255 255 255;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  color: var(--color-text);
+  background: var(--color-background);
+  transition:
+    color 0.5s,
+    background-color 0.5s;
+  line-height: 1.6;
+  /* --font-app is set by the Appearance settings (appearance.ts); the default stack is the fallback. */
+  font-family: var(
+    --font-app,
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif
+  );
+  font-size: 15px;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Small screens (a phone): everything is a little smaller. Most sizes are in rem, so the
+   root size scales them together; the body size (px) is what the text itself starts from. */
+@media (max-width: 700px) {
+  html {
+    font-size: 14px;
+  }
+
+  body {
+    font-size: 13px;
+  }
+}
+
+/* custom scrollbar, applied wherever .scroll-area is used */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-area::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-hover);
+  border-radius: 4px;
+}
+
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text);
+}

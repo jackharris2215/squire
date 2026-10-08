@@ -1,0 +1,9 @@
+node_modules
+dist
+notebook/
+.trash
+config.json
+.claude
+.vscode
+*.log
+docker-compose.yml
