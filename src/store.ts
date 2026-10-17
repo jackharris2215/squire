@@ -81,6 +81,14 @@ export function isPdfPath(path: string): boolean {
 // a pane (the browser draws it from the server's file) and has no note content.
 export const pdfList = computed(() => files.value.filter(isPdfPath))
 
+// A script is a Python file in the notebook (see the Scripts section below). Like a PDF it is
+// listed in the sidebar but is never a note: no note list, links or search.
+export function isScriptPath(path: string): boolean {
+  return /\.py$/i.test(path)
+}
+
+export const scriptList = computed(() => files.value.filter(isScriptPath))
+
 // Every image in the notebook, for the sidebar. Unlike notes, an image's content
 // never loads into the client; it's just a path the server can serve, so this
 // comes straight from `files` rather than the note-detecting pass in
@@ -171,7 +179,7 @@ export async function loadFiles() {
 // only exist as part of a note's or image's path.
 export function allFolderPaths(): Set<string> {
   const paths = new Set(folders.value)
-  for (const path of [...noteList.value.map((n) => n.path), ...imageList.value, ...pdfList.value]) {
+  for (const path of [...noteList.value.map((n) => n.path), ...imageList.value, ...pdfList.value, ...scriptList.value]) {
     const parts = path.split('/')
     for (let i = 1; i < parts.length; i++) paths.add(parts.slice(0, i).join('/'))
   }
@@ -185,7 +193,7 @@ function buildNoteIndex() {
   const index: Record<string, string> = {}
   const list: { title: string; path: string }[] = []
   for (const path of files.value) {
-    if (isImagePath(path) || isPdfPath(path)) continue
+    if (isImagePath(path) || isPdfPath(path) || isScriptPath(path)) continue
     const title = nameFromPath(path)
     index[title] = path
     list.push({ title, path })
@@ -296,13 +304,21 @@ function saveNoteAt(path: string): Promise<unknown> {
 
 // Sends every unsaved note now, and resolves once the server has taken them.
 export function saveAllNotes(): Promise<unknown> {
-  const saves = [...tracked.values()].filter((e) => e.dirty).map((e) => saveNoteAt(e.path))
+  const saves = [
+    ...[...tracked.values()].filter((e) => e.dirty).map((e) => saveNoteAt(e.path)),
+    ...[...scriptCache].filter(([, script]) => script.dirty).map(([path]) => saveScript(path)),
+  ]
   return Promise.all(saves).then(() => whenWritesDone())
 }
 
 // Drops a note's unsaved edits (used before deleting it, so a late save can't
 // bring it back).
 function discardPendingSave(path: string) {
+  const script = scriptCache.get(path)
+  if (script) {
+    clearTimeout(scriptTimers.get(path))
+    script.dirty = false
+  }
   const entry = tracked.get(path)
   if (!entry) return
   clearTimeout(entry.timer)
@@ -316,6 +332,156 @@ function remapTracked(remap: (path: string) => string) {
     entry.path = remap(entry.path)
     tracked.set(entry.path, entry)
   }
+}
+
+// --- Scripts ---
+// A script is a Python file in the notebook that the server can run (POST /run); it uses the
+// `squire` library to read and change notes. It is plain text, so it lives here rather than in
+// noteCache: scriptCache holds the text of the scripts opened so far, saved a moment after each
+// edit like a note, and scriptRuns the last output of each script's run.
+
+export interface ScriptState {
+  text: string
+  dirty: boolean // edited since the last save was sent
+  state: 'saved' | 'saving' | 'error'
+}
+
+export interface ScriptRun {
+  running: boolean
+  output: string
+  exitCode: number | null // null while running or when it was stopped for taking too long
+  timedOut: boolean
+  error: string | null // the run could not be started (or the script not saved)
+}
+
+export const scriptCache = reactive(new Map<string, ScriptState>())
+export const scriptRuns = reactive(new Map<string, ScriptRun>())
+const scriptTimers = new Map<string, ReturnType<typeof setTimeout>>() // pending autosaves
+
+const SCRIPT_TEMPLATE = `# A Squire script: press Run to run it. What it prints shows below.
+import squire
+
+for note in squire.notes():
+    print(note["name"])
+`
+
+async function fetchScriptText(path: string): Promise<string | null> {
+  const res = await fetch(`${SERVER_URL}/file?path=${encodeURIComponent(path)}`)
+  return res.ok ? await res.text() : null
+}
+
+async function ensureScriptLoaded(path: string) {
+  if (scriptCache.has(path) || loadingPaths.has(path)) return
+  loadingPaths.add(path)
+  try {
+    const text = await fetchScriptText(path)
+    if (text !== null) scriptCache.set(path, { text, dirty: false, state: 'saved' })
+  } finally {
+    loadingPaths.delete(path)
+  }
+}
+
+// Fetches a script shown in a pane again after a change made elsewhere. Unlike a note, unsaved
+// typing is kept: it saves over the other change a moment later.
+async function refreshScript(path: string) {
+  const entry = scriptCache.get(path)
+  if (!entry || entry.dirty) return
+  const text = await fetchScriptText(path)
+  if (text !== null && text !== entry.text) entry.text = text
+}
+
+export function editScript(path: string, text: string) {
+  const entry = scriptCache.get(path)
+  if (!entry || text === entry.text) return
+  entry.text = text
+  entry.dirty = true
+  entry.state = 'saving'
+  clearTimeout(scriptTimers.get(path))
+  scriptTimers.set(path, setTimeout(() => saveScript(path), config.value.autosaveDelayMs ?? DEFAULT_AUTOSAVE_MS))
+}
+
+export function saveScript(path: string): Promise<unknown> {
+  const entry = scriptCache.get(path)
+  clearTimeout(scriptTimers.get(path))
+  if (!entry || !entry.dirty) return whenWritesDone()
+  entry.dirty = false
+  const sent = entry.text
+  const failed = () => {
+    entry.state = 'error'
+    entry.dirty = true
+  }
+  return serverWrite(`/script?path=${encodeURIComponent(path)}`, { method: 'PUT', body: sent })
+    .then(({ ok }) => {
+      if (!ok) failed()
+      else if (entry.text === sent) entry.state = 'saved'
+    })
+    .catch(failed)
+}
+
+// Forgets everything held for a script that is gone.
+function dropScript(path: string) {
+  clearTimeout(scriptTimers.get(path))
+  scriptTimers.delete(path)
+  scriptCache.delete(path)
+  scriptRuns.delete(path)
+}
+
+// Saves the script, then has the server run it and keeps what it printed.
+export async function runScript(path: string) {
+  if (scriptRuns.get(path)?.running) return
+  await saveScript(path)
+  scriptRuns.set(path, { running: true, output: '', exitCode: null, timedOut: false, error: null })
+  const run = scriptRuns.get(path)!
+  if (scriptCache.get(path)?.dirty) {
+    run.error = 'The script could not be saved, so it was not run.'
+    run.running = false
+    return
+  }
+  try {
+    const res = await fetch(`${SERVER_URL}/run?path=${encodeURIComponent(path)}`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) run.error = data.error ?? `The server answered ${res.status}.`
+    else Object.assign(run, { output: data.output, exitCode: data.exitCode, timedOut: data.timedOut })
+  } catch {
+    run.error = 'Cannot reach the server.'
+  }
+  run.running = false
+}
+
+// A new script in `folder`, opened for editing.
+export async function createScript(folder = '') {
+  const prefix = folder ? `${folder}/` : ''
+  let name = 'New Script'
+  for (let n = 1; files.value.includes(`${prefix}${name}.py`); n++) name = `New Script (${n})`
+  const path = `${prefix}${name}.py`
+  const { ok } = await serverWrite(`/script?path=${encodeURIComponent(path)}`, { method: 'PUT', body: SCRIPT_TEMPLATE })
+  if (!ok) return
+  files.value.push(path)
+  scriptCache.set(path, { text: SCRIPT_TEMPLATE, dirty: false, state: 'saved' })
+  if (folder) collapsedFolders.value.delete(folder) // make sure the new script is visible
+  selectFile(path)
+}
+
+// A script is imported by scripts in its folder, so one called "squire" would hide the library.
+export function validateScriptName(input: string, currentName: string | undefined, path: string): string | null {
+  const error = validateImageName(input, currentName, path)
+  if (error) return error
+  if (input.trim().toLowerCase() === 'squire') return '"squire" is the library scripts import; pick another name.'
+  return null
+}
+
+// Renames a script through the server's /rename (the extension stays). Nothing links to one by
+// name, so unlike an image there are no links to rewrite.
+async function renameScript(path: string, newName: string): Promise<string | null> {
+  if (newName === nameFromPath(path)) return null
+  await saveAllNotes() // anything unsaved goes out under the old path first
+  const { ok, data } = await serverWrite(`/rename?path=${encodeURIComponent(path)}`, {
+    method: 'POST',
+    body: JSON.stringify({ name: newName }),
+  })
+  if (!ok) return data.error
+  remapPaths(path, data.path)
+  return null
 }
 
 // --- Following changes made elsewhere (the API, another window) ---
@@ -388,6 +554,11 @@ export async function applyServerChange(change: { lastSaved: number; notes: stri
     }
     const shown = new Set(openPaths())
     for (const path of change.notes ?? [...noteCache.keys()]) {
+      if (scriptCache.has(path)) {
+        if (shown.has(path)) await refreshScript(path)
+        else if (!scriptCache.get(path)!.dirty) dropScript(path) // loads afresh when next opened
+        continue
+      }
       if (!noteCache.has(path)) continue
       if (shown.has(path)) await refreshNote(path)
       else noteCache.delete(path)
@@ -455,7 +626,7 @@ const RECENT_NOTES_LIMIT = 30
 // Every note visited goes to the front of the Recent Notes list (not an image: there's
 // nothing to show for one there beyond what the file tree already does).
 watch(selectedFile, (path) => {
-  if (!path || isImagePath(path) || isPdfPath(path)) return
+  if (!path || isImagePath(path) || isPdfPath(path) || isScriptPath(path)) return
   const existing = config.value.recentNotes ?? []
   config.value.recentNotes = [path, ...existing.filter((p) => p !== path)].slice(0, RECENT_NOTES_LIMIT)
   queueConfigSave()
@@ -491,6 +662,7 @@ export function restoreOpenNotes() {
 // cached, and for an image: its bytes never enter the cache, the img tag fetches
 // them directly.
 async function ensureLoaded(path: string) {
+  if (isScriptPath(path)) return ensureScriptLoaded(path)
   if (isImagePath(path) || isPdfPath(path) || noteCache.has(path) || loadingPaths.has(path)) return
   loadingPaths.add(path)
   try {
@@ -764,8 +936,8 @@ export async function addImage(file: File): Promise<string | null> {
 
 // Renames a note, image or folder from the sidebar, checking the new name first.
 // Returns an error message, or null once it is renamed (or the name is unchanged).
-export async function renameEntry(kind: 'note' | 'image' | 'pdf' | 'folder', path: string, name: string): Promise<string | null> {
-  const isFile = kind === 'image' || kind === 'pdf' // renamed with its extension kept, like an image
+export async function renameEntry(kind: 'note' | 'image' | 'pdf' | 'script' | 'folder', path: string, name: string): Promise<string | null> {
+  const isFile = kind === 'image' || kind === 'pdf' || kind === 'script' // renamed with its extension kept, like an image
   const current =
     kind === 'folder' ? path.slice(path.lastIndexOf('/') + 1)
     : isFile ? nameFromPath(path)
@@ -780,8 +952,12 @@ export async function renameEntry(kind: 'note' | 'image' | 'pdf' | 'folder', pat
     }
     return renameFolder(path, name)
   }
-  const error = isFile ? validateImageName(name, current, path) : validateTitle(name, current)
+  const error =
+    kind === 'script' ? validateScriptName(name, current, path)
+    : isFile ? validateImageName(name, current, path)
+    : validateTitle(name, current)
   if (error) return error
+  if (kind === 'script') return renameScript(path, name)
   return isFile ? renameImage(path, name) : renameNote(path, name)
 }
 
@@ -809,6 +985,7 @@ function forgetNote(path: string) {
   const title = noteList.value.find((n) => n.path === path)?.title
   files.value = files.value.filter((f) => f !== path)
   noteCache.delete(path)
+  dropScript(path)
   noteList.value = noteList.value.filter((n) => n.path !== path)
   dropHistory(path)
   if (title !== undefined && noteIndex.value[title] === path) delete noteIndex.value[title]
@@ -980,10 +1157,14 @@ export async function deleteFolder(path: string) {
   for (const openPath of tracked.keys()) {
     if (openPath.startsWith(`${path}/`)) discardPendingSave(openPath)
   }
+  for (const scriptPath of scriptCache.keys()) {
+    if (scriptPath.startsWith(`${path}/`)) discardPendingSave(scriptPath)
+  }
   const { ok } = await serverWrite(`/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
   if (!ok) return
 
   for (const entry of inside) forgetNote(entry.path)
+  for (const scriptPath of scriptList.value.filter((p) => p.startsWith(`${path}/`))) forgetNote(scriptPath)
   folders.value = folders.value.filter((f) => f !== path && !f.startsWith(`${path}/`))
 }
 
@@ -1018,6 +1199,11 @@ function remapPaths(from: string, to: string) {
   noteCache.clear()
   for (const [key, value] of cached) noteCache.set(remap(key), value)
   collapsedFolders.value = new Set([...collapsedFolders.value].map(remap))
+  for (const cache of [scriptCache, scriptRuns] as Map<string, unknown>[]) {
+    const entries = [...cache]
+    cache.clear()
+    for (const [key, value] of entries) cache.set(remap(key), value)
+  }
 
   remapLayoutPaths(remap)
   remapTracked(remap)

@@ -106,7 +106,7 @@ export interface Config {
 
 // One line of the sidebar tree.
 export interface SidebarRow {
-  kind: 'folder' | 'note' | 'image' | 'pdf'
+  kind: 'folder' | 'note' | 'image' | 'pdf' | 'script'
   path: string
   label: string
   depth: number
@@ -121,4 +121,6 @@ export interface MenuContext {
   // Takes these hooked blocks out of the flow where they are on screen (only that
   // pane can measure where that is).
   unhook: (blockIds: string[]) => void
+  // Puts this block into edit mode with the cursor in it.
+  edit: (blockId: string) => void
 }

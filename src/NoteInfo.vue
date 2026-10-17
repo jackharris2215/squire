@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { SERVER_URL } from './api'
-import { allBlocks, isImagePath, isPdfPath, nameFromPath, noteCache, selectedFile } from './store'
+import { allBlocks, isImagePath, isPdfPath, isScriptPath, nameFromPath, noteCache, selectedFile } from './store'
 
 // The right panel's note info tab: read-only facts about the note or image in the
 // focused pane. Counts come from the note itself (reactive, so they track unsaved
@@ -9,7 +9,9 @@ import { allBlocks, isImagePath, isPdfPath, nameFromPath, noteCache, selectedFil
 // file-info either way, re-fetched whenever the open file changes.
 const note = computed(() => (selectedFile.value ? (noteCache.get(selectedFile.value) ?? null) : null))
 // An image or a PDF: a file with no note content, so only the file facts apply.
-const image = computed(() => !!selectedFile.value && (isImagePath(selectedFile.value) || isPdfPath(selectedFile.value)))
+const image = computed(
+  () => !!selectedFile.value && (isImagePath(selectedFile.value) || isPdfPath(selectedFile.value) || isScriptPath(selectedFile.value)),
+)
 
 const name = computed(() => (selectedFile.value ? nameFromPath(selectedFile.value) : ''))
 

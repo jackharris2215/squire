@@ -152,6 +152,24 @@ Claude Desktop (`claude_desktop_config.json`):
 Deleting a block is permanent, and `write_note` replaces a whole note, so a read-write token is a real
 grant of power; the read-only token is the safe default for an assistant you are still getting to know.
 
+### Scripts
+
+A `.py` file in the notebook is a script: it shows in the sidebar, opens in a plain editor, and the Run button
+runs it on the server (60 second limit), showing what it printed. Scripts use the `squire` library, which is
+already importable; it talks to the notebook through the same `/api/` routes as everything else:
+
+```python
+import squire
+
+for note in squire.notes():
+    print(note["name"])
+squire.append("Daily log", "Checked in")   # a note is given by its name or its path
+```
+
+See `server/squire.py` for everything it can do. A script can change or delete anything in the notebook
+(deleted notes go to the trash), and anyone who can log in can run code on the server this way, so only use
+this on a network you trust.
+
 ## More
 
 `CLAUDE.md` describes the code layout, how the data works, and the rules that are easy to break.

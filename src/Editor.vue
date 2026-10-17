@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import TableBlock from './TableBlock.vue'
 import RightPanelToggle from './RightPanelToggle.vue'
+import ScriptEditor from './ScriptEditor.vue'
 import LinkSuggest from './LinkSuggest.vue'
 import { caretPosition } from './caret'
 import { randomUUID } from './uuid'
@@ -34,6 +35,7 @@ import {
   isBookmarked,
   isImagePath,
   isPdfPath,
+  isScriptPath,
   nameFromPath,
   noteCache,
   redoEdit,
@@ -78,6 +80,8 @@ const isImage = computed(() => props.path !== null && isImagePath(props.path))
 const imageUrl = computed(() => (props.path ? `${SERVER_URL}/file?path=${encodeURIComponent(props.path)}` : ''))
 // A pane showing a PDF: the browser's own viewer in a frame, fed the same served file.
 const isPdf = computed(() => props.path !== null && isPdfPath(props.path))
+// A pane showing a script: ScriptEditor.vue (a text box, Run and the output).
+const isScript = computed(() => props.path !== null && isScriptPath(props.path))
 // A note's title is its filename (there's no separate title field); derived from
 // the path, not the note content, so it stays correct even before the note loads.
 const currentTitle = computed(() => (props.path ? nameFromPath(props.path) : ''))
@@ -118,7 +122,7 @@ function onImagePointerMove(event: PointerEvent) {
   imagePan.value = { x: imagePan.value.x + event.movementX, y: imagePan.value.y + event.movementY }
 }
 
-const headerLabel = computed(() => (props.path ? (isImage.value || isPdf.value ? baseName(props.path) : currentTitle.value) : ''))
+const headerLabel = computed(() => (props.path ? (isImage.value || isPdf.value || isScript.value ? baseName(props.path) : currentTitle.value) : ''))
 const selectedBlockIds = ref<string[]>([])
 const saveState = computed(() => saveStateFor(props.path))
 const canUndo = computed(() => canUndoFor(props.path))
@@ -135,6 +139,7 @@ function menuContext(): MenuContext {
     selectedIds: [...selectedBlockIds.value],
     clearSelection: () => (selectedBlockIds.value = []),
     unhook: unhookBlocks,
+    edit: startEditing,
   }
 }
 
@@ -1571,7 +1576,7 @@ onUnmounted(() => {
             </svg>
           </button>
         </div>
-        <div v-if="note || isImage || isPdf" class="header-actions">
+        <div v-if="note || isImage || isPdf || isScript" class="header-actions">
           <button class="icon-button" @click="emit('close')">✕</button>
         </div>
         <template v-if="rightPanelButton">
@@ -1583,7 +1588,7 @@ onUnmounted(() => {
     <main
       ref="editorRef"
       class="editor scroll-area"
-      :class="{ 'is-image': isImage || isPdf }"
+      :class="{ 'is-image': isImage || isPdf || isScript }"
       @dragover.prevent="onBlocksDragOver"
       @drop.prevent="onBlocksDrop"
       @scroll.passive="onEditorScroll"
@@ -1602,7 +1607,7 @@ onUnmounted(() => {
       <div
         ref="noteRef"
         class="note"
-        :class="[`width-${noteWidth}`, `position-${notePosition}`, { 'is-image': isImage || isPdf }]"
+        :class="[`width-${noteWidth}`, `position-${notePosition}`, { 'is-image': isImage || isPdf || isScript }]"
         :style="{ '--note-font-scale': fontSize / 100 }"
       >
         <template v-if="note">
@@ -1747,6 +1752,7 @@ onUnmounted(() => {
           />
         </div>
         <iframe v-else-if="isPdf" :key="props.path ?? ''" class="pdf-preview" :src="imageUrl" :title="headerLabel" />
+        <ScriptEditor v-else-if="isScript" :key="props.path ?? ''" :path="props.path!" />
         <div v-else-if="loading" class="empty-state">
           <div class="spinner" />
         </div>

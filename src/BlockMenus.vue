@@ -96,6 +96,24 @@ function setBlockSetting<K extends 'align' | 'textColor' | 'background'>(field: 
   for (const block of targetBlocks.value) block[field] = value
 }
 
+// Adds an empty text block in a row of its own just above the first, or just below the
+// last, of the targeted blocks that are in the flow (a floating block has no place in the
+// flow to be above or below, so the buttons are off when there are none).
+function insertAdjacent(where: 'above' | 'below') {
+  if (!note.value) return
+  const rows = hookedTargets.value
+    .map((b) => findBlockPosition(note.value, b.id)?.rowIndex)
+    .filter((i): i is number => i !== undefined)
+  if (!rows.length) return
+  const at = where === 'above' ? Math.min(...rows) : Math.max(...rows) + 1
+  const newBlock: Block = { id: `block-${randomUUID()}`, type: 'text', content: '' }
+  note.value.blocks.splice(at, 0, [newBlock])
+  const context = menuContext.value
+  context?.clearSelection()
+  close()
+  context?.edit(newBlock.id)
+}
+
 // Both close the menu and need no confirmation: undo brings the blocks back. A copy
 // goes in its own row just below the original, even if the original is a column.
 function duplicateBlock() {
@@ -249,6 +267,10 @@ const moveColumn = (by: -1 | 1) =>
     @mousedown.prevent
     @contextmenu.prevent.stop
   >
+    <div class="menu-group-label">Insert new block</div>
+    <button class="context-item" :disabled="!hookedTargets.length" @click="insertAdjacent('above')">Above</button>
+    <button class="context-item" :disabled="!hookedTargets.length" @click="insertAdjacent('below')">Below</button>
+    <div class="context-separator" />
     <button class="context-item" @click="duplicateBlock">Duplicate {{ targetLabel }}</button>
     <button v-if="hookedTargets.length" class="context-item" @click="unhookBlocks">
       Unhook {{ hookedTargets.length > 1 ? `${hookedTargets.length} blocks` : 'block' }}

@@ -103,6 +103,7 @@ import mimetypes
 import os
 import queue
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -138,6 +139,11 @@ COOKIE_NAME = "squire_session"
 # Tokens for the outside API under /api/ (see the docstring). Not set: that part is off.
 API_TOKEN = os.environ.get("SQUIRE_API_TOKEN") or None  # read and write
 API_READ_TOKEN = os.environ.get("SQUIRE_API_READ_TOKEN") or None  # read only
+# Made fresh at every start and handed only to the scripts the server runs (as SQUIRE_API_TOKEN),
+# so they can use /api/ without the owner configuring a token. Read and write, accepted from this
+# machine only, and it works even when the API is otherwise off.
+INTERNAL_TOKEN = secrets.token_urlsafe(32)
+LOOPBACK_ADDRESSES = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
 DEFAULT_CONFIG = {
     "sidebarWidth": 260,
@@ -292,6 +298,56 @@ def put_image(path, data):
     return {"path": rel(path)}
 
 
+SCRIPT_EXT = ".py"
+
+
+def put_script(path, text):
+    """Save a script (a Python file in the notebook) exactly as the editor sent it."""
+    if path.suffix.lower() != SCRIPT_EXT:
+        raise HttpError(400, "A script's path ends in .py")
+    if path.is_dir():
+        raise HttpError(409, "A folder with that name already exists")
+    if path.exists() and path.read_text(encoding="utf-8", newline="") == text:
+        return None  # nothing changed; leave the file and lastSaved alone
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="")
+    return {}
+
+
+SCRIPT_TIMEOUT_SECONDS = 60
+SCRIPT_OUTPUT_LIMIT = 100_000  # characters of output kept
+
+
+def run_script(path):
+    """Run a script as its own process (so a crash or an endless loop can't take the server
+    down) and return what it printed. It starts in the notebook folder and finds the `squire`
+    module next to this file; the internal token lets it use /api/ on this server. This is not a
+    notebook change, and it must not hold WRITE_LOCK: the script's own writes need it."""
+    if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
+        raise HttpError(400, "That is not a script")
+    env = {k: v for k, v in os.environ.items() if k not in ("SQUIRE_PASSWORD", "SQUIRE_API_READ_TOKEN")}
+    env.update({
+        "SQUIRE_URL": f"http://127.0.0.1:{PORT}",
+        "SQUIRE_API_TOKEN": INTERNAL_TOKEN,
+        "PYTHONPATH": str(Path(__file__).resolve().parent) + os.pathsep + env.get("PYTHONPATH", ""),
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+    })
+    timed_out = False
+    try:
+        done = subprocess.run(
+            [sys.executable, str(path)], cwd=NOTEBOOK_DIR, env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_SECONDS,
+        )
+        output, exit_code = done.stdout, done.returncode
+    except subprocess.TimeoutExpired as err:  # the process has been killed by now
+        output, exit_code, timed_out = err.stdout or b"", None, True
+    text = output.decode("utf-8", errors="replace")
+    if len(text) > SCRIPT_OUTPUT_LIMIT:
+        text = text[:SCRIPT_OUTPUT_LIMIT] + "\n[output cut off]"
+    return {"output": text, "exitCode": exit_code, "timedOut": timed_out}
+
+
 def move_to_trash(path):
     """Move a file or folder into the trash, keeping its path so it can be put back."""
     stamp = f"{time.strftime('%Y-%m-%d_%H-%M-%S')}_{time.time_ns() % 1_000_000_000}"
@@ -375,8 +431,8 @@ def rename_file(path, new_name):
         path.rename(target)
     except OSError:
         raise HttpError(400, "Invalid name")
-    if path.suffix.lower() in IMAGE_EXTS or path.suffix.lower() == ".pdf":
-        # Links to an image (or PDF) say its filename with the extension, or its notebook path.
+    if path.suffix.lower() in IMAGE_EXTS or path.suffix.lower() in (".pdf", SCRIPT_EXT):
+        # Links to an image (PDF, script) say its filename with the extension, or its notebook path.
         replacements = []
         for old, new in ((path.name, target.name), (rel(path), rel(target))):
             replacements += [(f"[[{old}]]", f"[[{new}]]"), (f"[[{old}|", f"[[{new}|")]
@@ -453,12 +509,13 @@ STATIC_TYPES = {
 # The routes that need the password (everything else is the public frontend).
 API_ROUTES = {
     "/files", "/folders", "/file", "/file-info", "/config", "/server-info", "/rename",
-    "/folder", "/folder-rename", "/move", "/image", "/open-notebook", "/events",
+    "/folder", "/folder-rename", "/move", "/image", "/script", "/run", "/open-notebook", "/events",
 }
 
 
-def api_role(header):
-    """'write', 'read' or None for an Authorization header's bearer token."""
+def api_role(header, loopback=False):
+    """'write', 'read' or None for an Authorization header's bearer token. The internal token
+    (see INTERNAL_TOKEN) counts only when the request came from this machine (`loopback`)."""
     scheme, _, supplied = (header or "").partition(" ")
     if scheme.lower() != "bearer" or not supplied.strip():
         return None
@@ -466,7 +523,8 @@ def api_role(header):
     # Both are compared every time, so how long the answer takes doesn't say which matched.
     is_write = bool(API_TOKEN) and hmac.compare_digest(supplied, API_TOKEN.encode("utf-8"))
     is_read = bool(API_READ_TOKEN) and hmac.compare_digest(supplied, API_READ_TOKEN.encode("utf-8"))
-    return "write" if is_write else "read" if is_read else None
+    is_internal = hmac.compare_digest(supplied, INTERNAL_TOKEN.encode("utf-8")) and loopback
+    return "write" if is_write or is_internal else "read" if is_read else None
 
 
 def api_list_notes(folder, query):
@@ -728,10 +786,11 @@ class Handler(BaseHTTPRequestHandler):
         params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         if parsed.path.startswith("/api/"):
             # The outside API has its own tokens; the password and cookie don't apply to it.
-            if not (API_TOKEN or API_READ_TOKEN):
-                raise HttpError(403, "The API is off: set SQUIRE_API_TOKEN (or SQUIRE_API_READ_TOKEN) on the server")
-            self._api_role = api_role(self.headers.get("Authorization"))
+            loopback = self.client_address[0] in LOOPBACK_ADDRESSES
+            self._api_role = api_role(self.headers.get("Authorization"), loopback)
             if not self._api_role:
+                if not (API_TOKEN or API_READ_TOKEN):
+                    raise HttpError(403, "The API is off: set SQUIRE_API_TOKEN (or SQUIRE_API_READ_TOKEN) on the server")
                 raise HttpError(401, "A valid API token is needed (Authorization: Bearer <token>)")
         elif PASSWORD and parsed.path in API_ROUTES and not self._logged_in():
             raise HttpError(401, "Login required")
@@ -907,6 +966,11 @@ class Handler(BaseHTTPRequestHandler):
             data = self._raw_body()
             self._write(params, lambda: put_image(path, data), tree=True)
             return
+        if route == "/script":
+            path = notebook_path(params.get("path"))
+            text = self._body()
+            self._write(params, lambda: put_script(path, text), notes=[rel(path)], tree=not path.exists())
+            return
         body = self._body()
         if route == "/config":
             with WRITE_LOCK:
@@ -961,6 +1025,8 @@ class Handler(BaseHTTPRequestHandler):
             if not name:
                 raise HttpError(400, "Missing name")
             self._write(params, lambda: rename_file(path, name), tree=True)
+        elif route == "/run":
+            self._send_json(run_script(notebook_path(params.get("path"))))
         elif route == "/login":
             self._login()
         elif route == "/open-notebook":

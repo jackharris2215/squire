@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The small icon before a name in the file tree and the search lists: a note, an
 // image, or a folder. Drawn in the surrounding text color.
-defineProps<{ kind: 'note' | 'image' | 'pdf' | 'folder' }>()
+defineProps<{ kind: 'note' | 'image' | 'pdf' | 'script' | 'folder' }>()
 </script>
 
 <template>
@@ -29,6 +29,11 @@ defineProps<{ kind: 'note' | 'image' | 'pdf' | 'folder' }>()
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
       <path d="M14 3v5h5" />
       <path d="M8 13h8M8 17h5" />
+    </template>
+    <template v-else-if="kind === 'script'">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M10 12l-2 2 2 2M14 12l2 2-2 2" />
     </template>
     <template v-else>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

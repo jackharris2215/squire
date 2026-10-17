@@ -7,6 +7,7 @@ import {
   copyNote,
   createFolder,
   createNote,
+  createScript,
   deleteBookmarkFolder,
   deleteFolder,
   deleteNote,
@@ -23,7 +24,7 @@ import {
 // a subset since it isn't a real notebook location). The parent opens and closes it
 // (defineExpose below), since clicking elsewhere or opening another menu closes this one.
 interface MenuState {
-  kind: 'note' | 'folder' | 'image' | 'pdf' | 'bookmark-folder'
+  kind: 'note' | 'folder' | 'image' | 'pdf' | 'script' | 'bookmark-folder'
   path: string // notebook path; unused for a bookmark folder
   id?: string // bookmark folder id; only set for kind 'bookmark-folder'
   x: number
@@ -66,6 +67,13 @@ function newNote() {
   const folder = menu.value.path
   close()
   createNote(nextNewNoteTitle(), folder)
+}
+
+function newScript() {
+  if (!menu.value) return
+  const folder = menu.value.path
+  close()
+  createScript(folder)
 }
 
 function newFolder() {
@@ -193,7 +201,7 @@ function rename() {
         </div>
       </div>
     </template>
-    <template v-else-if="menu.kind === 'image' || menu.kind === 'pdf'">
+    <template v-else-if="menu.kind === 'image' || menu.kind === 'pdf' || menu.kind === 'script'">
       <button class="context-item" @click="openNote">Open</button>
       <button class="context-item" @click="openBeside('right')">Open to the right</button>
       <button class="context-item" @click="openBeside('bottom')">Open below</button>
@@ -205,6 +213,7 @@ function rename() {
     </template>
     <template v-else>
       <button class="context-item" @click="newNote">New note</button>
+      <button class="context-item" @click="newScript">New script</button>
       <button class="context-item" @click="newFolder">New folder</button>
       <div class="context-separator" />
       <button class="context-item" @click="rename">Rename</button>

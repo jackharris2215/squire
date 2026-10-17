@@ -11,5 +11,5 @@ export const settingsOpen = ref(false)
 // The sidebar row being renamed in place (its name is an input while this is set). A
 // bookmark folder is identified by id, not path — it isn't a real notebook entry.
 export const renaming = ref<
-  { kind: 'note' | 'image' | 'pdf' | 'folder'; path: string } | { kind: 'bookmark-folder'; id: string } | null
+  { kind: 'note' | 'image' | 'pdf' | 'script' | 'folder'; path: string } | { kind: 'bookmark-folder'; id: string } | null
 >(null)

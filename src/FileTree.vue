@@ -14,6 +14,7 @@ import {
   createFolder,
   createNewNote,
   createNote,
+  createScript,
   imageList,
   moveItem,
   nameFromPath,
@@ -21,6 +22,7 @@ import {
   pdfList,
   renameEntry,
   sanitizeName,
+  scriptList,
   selectedFile,
   selectFile,
 } from './store'
@@ -55,6 +57,9 @@ const sidebarRows = computed<SidebarRow[]>(() => {
       ...(config.value.showPdfsInTree === false ? [] : pdfList.value)
         .filter((path) => parentOf(path) === parent)
         .map((path) => ({ kind: 'pdf' as const, path, label: baseName(path), depth })),
+      ...scriptList.value
+        .filter((path) => parentOf(path) === parent)
+        .map((path) => ({ kind: 'script' as const, path, label: baseName(path), depth })),
     ]
     filesHere.sort((a, b) => a.label.localeCompare(b.label))
     rows.push(...filesHere)
@@ -86,8 +91,8 @@ function isRenaming(row: SidebarRow) {
 watch(renaming, (target) => {
   renameError.value = null
   const row = target && sidebarRows.value.find((r) => r.kind === target.kind && r.path === target.path)
-  // An image's or PDF's label has its extension; the name being renamed doesn't.
-  renameDraft.value = !row ? '' : row.kind === 'image' || row.kind === 'pdf' ? nameFromPath(row.path) : row.label
+  // An image's, PDF's or script's label has its extension; the name being renamed doesn't.
+  renameDraft.value = !row ? '' : row.kind === 'image' || row.kind === 'pdf' || row.kind === 'script' ? nameFromPath(row.path) : row.label
 })
 
 function cancelRename() {
@@ -184,7 +189,7 @@ function toggleFolder(path: string) {
 // area, for the notebook root) moves it there; a folder takes its contents along.
 // The browser's drag image is the ghost.
 const draggedPath = ref<string | null>(null)
-const draggedKind = ref<'note' | 'image' | 'pdf' | 'folder'>('note')
+const draggedKind = ref<'note' | 'image' | 'pdf' | 'script' | 'folder'>('note')
 const dropTarget = ref<string | null>(null) // folder path, '' for root, null for none
 
 // Dropping on a folder row targets that folder; dropping on a note row targets
@@ -251,6 +256,13 @@ function onRowDrop(folder: string) {
           <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
           <path d="M14 3v5h5" />
           <path d="M12 12v6M9 15h6" />
+        </svg>
+      </button>
+      <button class="sidebar-action" title="New script" aria-label="New script" @click="createScript()">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+          <path d="M14 3v5h5" />
+          <path d="M10 12l-2 2 2 2M14 12l2 2-2 2" />
         </svg>
       </button>
       <button class="sidebar-action" title="New folder" aria-label="New folder" @click="createFolder()">
