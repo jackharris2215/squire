@@ -46,8 +46,7 @@ After a build the server also serves the app itself, so `http://localhost:8765` 
 
 ## Docker
 
-Create a `docker-compose.yml` next to the `Dockerfile` (this one is not kept in the repository,
-since it holds your password and token):
+Create a `docker-compose.yml` next to the `Dockerfile`:
 
 ```yaml
 services:
