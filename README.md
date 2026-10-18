@@ -1,25 +1,28 @@
 # Squire Notes
 
-Squire for short: a personal note-taking app in the browser. Notes are plain JSON files in a `notebook/` folder, built from
-Notion-style blocks. Vue 3 + Vite + TypeScript on the front, one standard-library Python file
-on the back.
+Squire for short: a personal note-taking app in the browser. Notes are plain JSON files in a
+`notebook/` folder, built from Notion-style blocks. Vue 3 + Vite + TypeScript on the front, one
+standard-library Python file on the back.
 
 ## Features
 
 - **Blocks:** text, tables (editable grids), checklists, bulleted lists, columns, per-block
   alignment and colors, drag and drop to rearrange.
-- **Floating blocks:** unhook a block (right-click it) and drag it
-  anywhere on the note, resize it, stack it in front of or behind others. Hook it back to return
-  it to the flow.
-- **Block browser:** the right panel lists every block in the note, floating ones included, so
-  nothing gets lost behind something else.
+- **Floating blocks:** unhook a block (right-click it) and drag it anywhere on the note, resize
+  it, stack it in front of or behind others. Hook it back to return it to the flow.
+- **Block browser:** the right panel lists every block in the note, floating ones included.
 - **Links and images:** `[[Note]]` links with autocomplete, `![[image.png|400]]` embeds, paste an
   image straight into a block. Renaming a note or image updates its links.
-- **Variables and widgets:** notebook-wide and per-note variables (text, number, boolean),
-  `{{name}}` / `{{a + b}}` formulas, and widgets (input, checkbox, checkboxes, counter, slider).
-- **Panes:** split the view into several notes, with back/forward per pane, a quick switcher
-  (Ctrl+P), bookmarks and a daily note.
+- **Variables and widgets:** notebook-wide and per-note variables (text, number, boolean, date,
+  time), `{{name}}` / `{{a + b}}` formulas, and widgets (input, checkbox, checkboxes, counter,
+  slider).
+- **Scripts:** `.py` files in the notebook, run from the app with a `squire` library already
+  available to read and edit the notebook, plus optional one-time or repeating schedules.
+- **Daily and weekly notes**, each with an optional template to start from.
+- **Panes:** split the view into several notes, with a quick switcher (Ctrl+P), bookmarks, and a
+  block browser / links / note-info side panel.
 - Undo/redo per note, autosave, and a trash folder instead of permanent deletes.
+- An outside API (`/api/...`) for scripts and other tools to read and edit the notebook.
 
 ## Running it
 
@@ -29,18 +32,17 @@ python server/server.py   # the server, port 8765
 npm run dev               # the client (Vite)
 ```
 
-The server serves the `notebook/` folder from the project root; the app's settings are a hidden
-file inside it (`.squire-config.json`, copied from an old project-folder `config.json` the
-first time), so the notebook folder is everything there is to back up or mount. Where the notebook,
-config, port and address are can be changed with flags or environment variables (see
-`server/server.py`).
+The server serves the `notebook/` folder from the project root; its settings are a hidden file
+inside it (`.squire-config.json`), so the notebook folder is everything there is to back up or
+mount. The notebook, config, port and address can all be changed with flags or environment
+variables (see `server/server.py`).
 
 ```sh
 npm run build             # type-check and build
 ```
 
-After a build the server also serves the app itself, so `http://localhost:8765` is all you
-need; `npm run dev` is only for development.
+After a build the server also serves the app itself, so `http://localhost:8765` is all you need;
+`npm run dev` is only for development.
 
 ## Docker
 
@@ -70,32 +72,26 @@ docker compose up -d --build   # then open http://localhost:8765
 ```
 
 The image builds the app and runs the server, which serves both. Your notebook is the
-`./notebook` folder on the host, mounted at `/data/notebook` (notes, trash and settings all
-live there).
+`./notebook` folder on the host, mounted at `/data/notebook` (notes, trash and settings all live
+there).
 
 ## Reaching it from other devices
 
-The server listens on every network interface (and the compose file publishes the port), so any
-device on your network can open `http://<this machine's address>:8765`; the server prints that
-address when it starts. To keep it to this machine, start it with `--host localhost` (or
-`HOST=localhost`), and in `docker-compose.yml` publish `127.0.0.1:8765:8765`. The first time,
-Windows may ask whether to let Python through the firewall; allow it on private networks.
+The server listens on every interface by default and prints its LAN address on startup, so any
+device on your network can open `http://<that address>:8765`. To keep it to this machine, run
+with `--host localhost` (`HOST=localhost`), and in `docker-compose.yml` publish
+`127.0.0.1:8765:8765` instead.
 
-### Password
-
-Set `SQUIRE_PASSWORD` (the compose file has it under `environment:`; change it from `changeme`) or
-start the server with `--password`, and the app asks for that password before it shows anything.
-Without one there is no login at all, so anyone who can reach the port can read and change your
-notes. It is a single shared password sent over plain HTTP, which keeps casual visitors out but is
-not strong security: only use this on a network you trust, over a VPN, or behind a reverse proxy
-with HTTPS, and don't forward the port to the internet. There is no way to change it from the app;
-change the setting and restart the server.
+Set `SQUIRE_PASSWORD` (or `--password`) to require a password before the app shows anything.
+Without one, anyone who can reach the port can read and change your notes. It's a single shared
+password over plain HTTP — fine to keep casual visitors out on a trusted network, but not strong
+security: don't forward the port to the internet.
 
 ### API for scripts and assistants
 
-Set `SQUIRE_API_READ_TOKEN` (read only) and/or `SQUIRE_API_TOKEN` (read and write), or the
-`--api-read-token` / `--api-token` flags; with neither, the API is off. Send the token as
-`Authorization: Bearer <token>`. It does not use the app password.
+Set `SQUIRE_API_READ_TOKEN` (read only) and/or `SQUIRE_API_TOKEN` (read and write) — with neither,
+the API is off. Send the token as `Authorization: Bearer <token>`; it doesn't use the app
+password.
 
 ```
 GET /api/notes?folder=&q=   the folders, notes and other files (both filters optional)
@@ -112,51 +108,21 @@ POST /api/note?path=x.json  create a note (409 if it exists); body optional note
 DELETE /api/note?path=      move a note to notebook/.trash (the same as deleting in the app)
 POST /api/folder?path=      create a folder (409 if it exists)
 DELETE /api/folder?path=    move a folder and everything in it to notebook/.trash
-POST /api/move?path=&to=    move a note, image, PDF or folder into folder `to` ("" = top level); replies with its new path
+POST /api/move?path=&to=    move a note, image, PDF or folder into folder `to` ("" = top level)
+GET /api/variable?name=&path=    read a variable (notebook-wide if path is omitted)
+PUT /api/variable?name=&path=    create or update a variable; body {"type", "value"}
+DELETE /api/variable?name=&path= delete a variable
 ```
 
-An optional `&lastSaved=` on the PUT refuses the write (412) if the notebook changed since you read it.
-Open browser windows follow API changes live: the file list updates and a note on screen
-changes in place (the server's copy wins over anything not yet saved).
-
-### Letting an AI assistant use the notebook (MCP)
-
-`mcp/squire_mcp.py` is a small MCP server (Python, standard library only) that turns the API
-above into tools an assistant such as Claude Code or Claude Desktop can call: search and list
-notes, read a note and its blocks, edit or add or delete a block, create, write, move and delete
-notes and folders. It runs on the machine where the assistant runs (not in the container) and
-talks to the server over HTTP, so it needs `SQUIRE_URL` (default `http://localhost:8765`) and
-`SQUIRE_API_TOKEN`: put in whichever token you want it to have. The read-only token makes every
-tool that changes something fail, which is a good way to let an assistant look around.
-
-Claude Code:
-
-```bash
-claude mcp add squire -e SQUIRE_URL=http://localhost:8765 -e SQUIRE_API_TOKEN=your-token -- python /path/to/mcp/squire_mcp.py
-```
-
-Claude Desktop (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "squire": {
-      "command": "python",
-      "args": ["/path/to/mcp/squire_mcp.py"],
-      "env": { "SQUIRE_URL": "http://localhost:8765", "SQUIRE_API_TOKEN": "your-token" }
-    }
-  }
-}
-```
-
-Deleting a block is permanent, and `write_note` replaces a whole note, so a read-write token is a real
-grant of power; the read-only token is the safe default for an assistant you are still getting to know.
+An optional `&lastSaved=` on a write refuses it (412) if the notebook changed since you read it.
+Open browser windows follow API changes live.
 
 ### Scripts
 
-A `.py` file in the notebook is a script: it shows in the sidebar, opens in a plain editor, and the Run button
-runs it on the server (60 second limit), showing what it printed. Scripts use the `squire` library, which is
-already importable; it talks to the notebook through the same `/api/` routes as everything else:
+A `.py` file in the notebook is a script: it shows in the sidebar, opens in a plain editor, and
+the Run button runs it on the server (60 second limit), showing what it printed. Scripts use the
+`squire` library, which is already importable; it talks to the notebook through the same `/api/`
+routes as everything else:
 
 ```python
 import squire
@@ -166,10 +132,7 @@ for note in squire.notes():
 squire.append("Daily log", "Checked in")   # a note is given by its name or its path
 ```
 
-See `server/squire.py` for everything it can do. A script can change or delete anything in the notebook
-(deleted notes go to the trash), and anyone who can log in can run code on the server this way, so only use
+See `server/squire.py` for everything it can do. A script can also carry a one-time or repeating
+schedule, set from its editor. A script can change or delete anything in the notebook (deleted
+notes go to the trash), and anyone who can log in can run code on the server this way, so only use
 this on a network you trust.
-
-## More
-
-`CLAUDE.md` describes the code layout, how the data works, and the rules that are easy to break.

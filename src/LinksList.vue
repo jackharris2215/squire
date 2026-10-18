@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { allBlocks, imageIndex, nameFromPath, noteCache, noteIndex, scriptIndex, selectFile, selectedFile } from './store'
+import { resolveLinkFormulas } from './markdown'
 
 // The right panel's Links tab: every note, image or script the focused note links to
 // with [[...]] or embeds with ![[...]], in the order they first appear, deduplicated by
@@ -8,8 +9,8 @@ import { allBlocks, imageIndex, nameFromPath, noteCache, noteIndex, scriptIndex,
 // missing link renders inline) so a broken one is easy to spot, but isn't clickable.
 const note = computed(() => (selectedFile.value ? (noteCache.get(selectedFile.value) ?? null) : null))
 
-// Same pattern renderLinks (markdown.ts) uses to find links and strip an embed's
-// |width suffix.
+// Same pattern renderLinks (markdown.ts) uses to find links and strip an embed's |width or
+// a plain link's |alias — either way, what's shown here is the actual target, not the alias.
 const LINK_RE = /\[\[([^\]]+)\]\]/g
 const SIZED_RE = /^(.+)\|\s*(\d+)\s*$/
 
@@ -23,10 +24,12 @@ const links = computed(() => {
   const seen = new Set<string>()
   const entries: LinkEntry[] = []
   for (const block of allBlocks(note.value)) {
-    for (const match of block.content.matchAll(LINK_RE)) {
+    const content = resolveLinkFormulas(block.content, selectedFile.value)
+    for (const match of content.matchAll(LINK_RE)) {
       const inner = match[1]!
       const sized = SIZED_RE.exec(inner)
-      const title = sized ? sized[1]! : inner
+      const pipeIndex = inner.indexOf('|')
+      const title = sized ? sized[1]! : pipeIndex !== -1 ? inner.slice(0, pipeIndex).trim() : inner
       const key = title.trim().toLowerCase()
       if (seen.has(key)) continue
       seen.add(key)

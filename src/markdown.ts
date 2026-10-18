@@ -182,7 +182,8 @@ function renderWidget(inner: string, notePath: string | null): string {
 
 // Turns [[Title]] into a link to that note (or one that would create it), and
 // [[img.jpg]] into a link to that image. ![[img.jpg]] shows the image inline,
-// ![[img.jpg|400]] with a max width of 400px.
+// ![[img.jpg|400]] with a max width of 400px. [[Title|Display text]] (not an embed) links to
+// Title but shows "Display text" instead, same idea as Obsidian's alias syntax.
 // An image is only matched by its full filename (or its notebook path), never by a
 // title, and a missing image is never offered for creation as a note.
 function renderLinks(html: string): string {
@@ -190,7 +191,10 @@ function renderLinks(html: string): string {
     // ![[img.jpg|400]]: an embed may end in |width, a max width in pixels. The
     // height follows, so the aspect ratio is kept.
     const sized = bang ? /^(.+)\|\s*(\d+)\s*$/.exec(inner) : null
-    const title = sized ? sized[1]! : inner
+    // [[Title|Display text]]: a plain link's |suffix is an alias instead of a width.
+    const aliased = !bang ? /^(.+?)\|([\s\S]*)$/.exec(inner) : null
+    const title = sized ? sized[1]! : aliased ? aliased[1]!.trim() : inner
+    const shown = aliased ? aliased[2]!.trim() || title : title
     const imagePath = imageIndex.value[title]
     if (bang && imagePath && isImagePath(imagePath)) {
       const src = `${SERVER_URL}/file?path=${encodeURIComponent(imagePath)}`
@@ -198,9 +202,23 @@ function renderLinks(html: string): string {
       return `<img class="embed-image" src="${src}" alt="${title}" draggable="false" style="max-width:${maxWidth};height:auto">`
     }
     const path = noteIndex.value[title] ?? imagePath ?? scriptIndex.value[title]
-    if (path) return `${bang}<a href="#" class="note-link" data-path="${path}">${title}</a>`
-    if (isImagePath(title) || isPdfPath(title) || isScriptPath(title)) return `${bang}<a href="#" class="note-link missing">${title}</a>`
-    return `${bang}<a href="#" class="note-link missing" data-title="${title}">${title}</a>`
+    if (path) return `${bang}<a href="#" class="note-link" data-path="${path}">${shown}</a>`
+    if (isImagePath(title) || isPdfPath(title) || isScriptPath(title)) return `${bang}<a href="#" class="note-link missing">${shown}</a>`
+    return `${bang}<a href="#" class="note-link missing" data-title="${title}">${shown}</a>`
+  })
+}
+
+// [[{{Date}}]] (or ![[{{Date}}]], optionally followed by |width or |an alias): when the whole
+// bracket content up to that point is one {{formula}}, it's evaluated like a plain {{display}}
+// and spliced in as the literal title before anything else runs, so the link resolves/misses/
+// offers creation exactly as if that text had been typed by hand; anything after it (a width,
+// an alias) is left as-is for renderLinks to interpret. Left alone (so it falls through to the
+// normal {{...}} handling, which shows a missing widget) if the formula can't be evaluated.
+// Shared with LinksList.vue, which re-scans the same raw [[...]] syntax independently.
+export function resolveLinkFormulas(content: string, notePath: string | null): string {
+  return content.replace(/(!?)\[\[\{\{([^{}]+)\}\}([^\]]*)\]\]/g, (match, bang, expr, suffix) => {
+    const shown = evaluateWidget(expr.trim(), notePath)
+    return shown === null ? match : `${bang}[[${shown}${suffix}]]`
   })
 }
 
@@ -214,7 +232,7 @@ export function renderBlock(content: string, notePath: string | null = null): st
   // formula (two * would turn the text between them into italics); they are put
   // back once the markdown is rendered.
   const widgets: string[] = []
-  const protectedContent = content.replace(/\{\{([^{}]+)\}\}/g, (_match, inner: string) => {
+  const protectedContent = resolveLinkFormulas(content, notePath).replace(/\{\{([^{}]+)\}\}/g, (_match, inner: string) => {
     widgets.push(renderWidget(inner, notePath))
     return `${widgets.length - 1}`
   })

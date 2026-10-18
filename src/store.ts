@@ -38,7 +38,7 @@ import {
   folderOrDefault,
   formatDate,
 } from './notebookSettings'
-import type { Block, BookmarkFolder, BookmarkItem, Config, FloatingBlock, Note } from './types'
+import type { Block, BookmarkFolder, BookmarkItem, Config, FloatingBlock, Note, Variable } from './types'
 
 // Shared state for the notebook: what's on the server, what's loaded, and which
 // note is open. Everything else (the sidebar, the editor) reads and changes it.
@@ -853,13 +853,25 @@ async function templateContent(title: string): Promise<Pick<Note, 'blocks' | 'me
   return JSON.parse(JSON.stringify({ blocks: template.blocks, metadata: template.metadata, floating: template.floating }))
 }
 
+// Sets (or adds) a date variable named "Today" in `metadata`, replacing one of any type
+// already there by that name — a template's own placeholder "Today", say.
+function withTodayVariable(metadata: Note['metadata'], dateIso: string): Note['metadata'] {
+  const variables = Array.isArray(metadata.variables) ? [...(metadata.variables as Variable[])] : []
+  const today: Variable = { name: 'Today', type: 'date', value: dateIso }
+  const existing = variables.findIndex((v) => v.name === 'Today')
+  if (existing === -1) variables.push(today)
+  else variables[existing] = today
+  return { ...metadata, variables }
+}
+
 // Opens today's daily note, made first if it doesn't exist (the folder is made along
-// with it, by the server). Its folder, name format and template are settings (notebookSettings.ts).
+// with it, by the server). Its folder, name format and template are settings
+// (notebookSettings.ts); it always gets a "Today" date variable set to its own date.
 export async function openDailyNote() {
   const folder = folderOrDefault(config.value.dailyNoteFolder, DEFAULT_DAILY_FOLDER)
   const title = sanitizeName(formatDate(config.value.dailyNoteFormat ?? DEFAULT_DAILY_FORMAT))
   const template = config.value.dailyTemplateEnabled && config.value.dailyTemplate ? config.value.dailyTemplate : null
-  await openDatedNote(folder, title, template)
+  await openDatedNote(folder, title, template, formatDate('yyyy-MM-dd'))
 }
 
 // Opens this week's weekly note, the same way; its format's yyyy is the week's year, and
@@ -873,12 +885,14 @@ export async function openWeeklyNote() {
   await openDatedNote(folder, title, template)
 }
 
-async function openDatedNote(folder: string, title: string, templateTitle: string | null) {
+// `todayDate` ("YYYY-MM-DD"), only set for a daily note, adds its "Today" variable.
+async function openDatedNote(folder: string, title: string, templateTitle: string | null, todayDate: string | null = null) {
   const path = `${folder ? `${folder}/` : ''}${title}.json`
   if (files.value.includes(path)) return selectFile(path)
   if (folder && !folders.value.includes(folder)) folders.value.push(folder)
   const content = templateTitle ? await templateContent(templateTitle) : null
-  await createNote(title, folder, content?.blocks ?? [], content?.metadata ?? {}, content?.floating)
+  const metadata = todayDate ? withTodayVariable(content?.metadata ?? {}, todayDate) : content?.metadata ?? {}
+  await createNote(title, folder, content?.blocks ?? [], metadata, content?.floating)
 }
 
 // A new note goes in the folder from the settings (the top level unless set).
