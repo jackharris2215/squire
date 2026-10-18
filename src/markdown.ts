@@ -1,6 +1,6 @@
 import { marked } from 'marked'
 import { SERVER_URL } from './api'
-import { imageIndex, isImagePath, isPdfPath, noteIndex } from './store'
+import { imageIndex, isImagePath, isPdfPath, isScriptPath, noteIndex, scriptIndex } from './store'
 import type { Variable } from './types'
 import { WIDGETS, evaluateBoolean, evaluateNumber, evaluateWidget, findVariable, formatNumber, widgetAccepts, widgetKind } from './variables'
 
@@ -115,12 +115,31 @@ function renderIf(parts: string[], notePath: string | null, inner: string): stri
   return `<span class="variable-widget">${escapeHtml(shown)}</span>`
 }
 
+// The run widget: a button that runs a script (by name, filename, or full path) when
+// clicked, optionally labeled with a third argument (the script's name otherwise). It
+// isn't a variable, so it's special-cased here like "if" rather than being a WIDGETS
+// entry; handleWidgetEvent (variables.ts) calls store.ts's runScript() directly on a
+// click. Running never writes anything into this (or any) note — the script's own
+// output stays wherever runScript already keeps it (the script's own pane, if it's open).
+function unquote(text: string): string {
+  return text.trim().replace(/^"([^"]*)"$/, '$1').trim()
+}
+
+function renderRun(parts: string[], inner: string): string {
+  const name = unquote(parts[1]!)
+  const path = scriptIndex.value[name]
+  if (!path) return missingWidget(inner, `There is no script named "${name}".`)
+  const label = parts[2] !== undefined ? unquote(parts[2]) : name
+  return `<button class="widget-input widget-run" data-widget="run" data-path="${escapeHtml(path)}">${escapeHtml(label)}</button>`
+}
+
 function renderWidget(inner: string, notePath: string | null): string {
   const parts = splitTopLevel(inner)
-  // Only a comma after "if" makes it the if display — a bare {{if}} could be a
-  // variable actually named "if" (variable names are letters and spaces, so that's
-  // legal), and should show as that instead.
+  // Only a comma after "if"/"run" makes it that display — a bare {{if}} or {{run}}
+  // could be a variable actually named that (variable names are letters and spaces,
+  // so that's legal), and should show as that instead.
   if (parts.length > 1 && parts[0]!.trim().toLowerCase() === 'if') return renderIf(parts, notePath, inner)
+  if (parts.length >= 2 && parts.length <= 3 && parts[0]!.trim().toLowerCase() === 'run') return renderRun(parts, inner)
   // A comma doesn't always mean a widget: a formula's function calls have them too
   // (max(a, b), say), so a formula is tried whenever the first part isn't a widget.
   const widget = parts.length > 1 ? widgetKind(parts[0]!) : null
@@ -178,9 +197,9 @@ function renderLinks(html: string): string {
       const maxWidth = sized ? `min(${sized[2]}px,100%)` : '100%'
       return `<img class="embed-image" src="${src}" alt="${title}" draggable="false" style="max-width:${maxWidth};height:auto">`
     }
-    const path = noteIndex.value[title] ?? imagePath
+    const path = noteIndex.value[title] ?? imagePath ?? scriptIndex.value[title]
     if (path) return `${bang}<a href="#" class="note-link" data-path="${path}">${title}</a>`
-    if (isImagePath(title) || isPdfPath(title)) return `${bang}<a href="#" class="note-link missing">${title}</a>`
+    if (isImagePath(title) || isPdfPath(title) || isScriptPath(title)) return `${bang}<a href="#" class="note-link missing">${title}</a>`
     return `${bang}<a href="#" class="note-link missing" data-title="${title}">${title}</a>`
   })
 }

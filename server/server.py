@@ -82,6 +82,22 @@ routes above. It needs a token sent as "Authorization: Bearer <token>": SQUIRE_A
   PUT /api/note?path=        -> write a whole note (creates it if missing); body is note JSON
                                 {"metadata", "blocks"}. Needs the read-write token. An optional
                                 &lastSaved= refuses (412) if the notebook changed since then.
+  PUT /api/script?path=      -> write a script (path ends in .py), creating it if missing or
+                                replacing its text if it exists; body is the script's source as
+                                plain text. Needs the read-write token. An optional &lastSaved=
+                                refuses (412) if the notebook changed since then.
+  GET /api/variable?name=[&path=]    -> {"name", "type", "value"} of one variable: a note's
+                                (give &path=) or the notebook's (leave &path= out). 404 if not
+                                found.
+  PUT /api/variable?name=[&path=]    -> create or change a variable; body {"type", "value"}
+                                (type is "text", "number", "boolean", "date" ("YYYY-MM-DD") or
+                                "time" ("HH:MM")). Needs the read-write token. A note variable's
+                                write takes the optional &lastSaved= like PUT /api/note; a
+                                notebook variable lives in the config file, so (like PUT /config)
+                                it isn't tracked by lastSaved or live sync — an open window only
+                                sees the change on its next reload.
+  DELETE /api/variable?name=[&path=] -> remove a variable. Needs the read-write token; the same
+                                &lastSaved=/live-sync rules as PUT above apply.
 
 Password: if one is set (SQUIRE_PASSWORD / --password), every API route above needs a
 login first: POST /login with {"password": ...} replies with a cookie the browser sends from
@@ -96,6 +112,7 @@ file in the notebook, copied from the old project-folder config.json the first t
 """
 
 import argparse
+import calendar
 import hashlib
 import hmac
 import json
@@ -108,10 +125,12 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
 import uuid
+from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -301,16 +320,39 @@ def put_image(path, data):
 SCRIPT_EXT = ".py"
 
 
+def _load_script(path):
+    """A script's stored data: {"script": <code>, ...other metadata, such as a future
+    schedule}. A script still in its old format (plain Python text, from before scripts were
+    wrapped in JSON) is treated as {"script": <that text>}, so it reads fine either way and
+    upgrades to the JSON form the next time it's saved."""
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {"script": raw}
+    return data if isinstance(data, dict) else {"script": raw}
+
+
+def read_script(path):
+    """A script's code, for the editor to show or for run_script() to run."""
+    return _load_script(path).get("script", "")
+
+
 def put_script(path, text):
-    """Save a script (a Python file in the notebook) exactly as the editor sent it."""
+    """Save a script's code (a .py file in the notebook, stored as JSON so it can carry other
+    metadata alongside its code), keeping any metadata it already had."""
     if path.suffix.lower() != SCRIPT_EXT:
         raise HttpError(400, "A script's path ends in .py")
+    if path.stem.lower() == "squire":
+        raise HttpError(400, '"squire" is the library scripts import; pick another name.')
     if path.is_dir():
         raise HttpError(409, "A folder with that name already exists")
-    if path.exists() and path.read_text(encoding="utf-8", newline="") == text:
+    data = _load_script(path) if path.exists() else {}
+    if data.get("script", "") == text:
         return None  # nothing changed; leave the file and lastSaved alone
+    data["script"] = text
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="")
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return {}
 
 
@@ -320,11 +362,15 @@ SCRIPT_OUTPUT_LIMIT = 100_000  # characters of output kept
 
 def run_script(path):
     """Run a script as its own process (so a crash or an endless loop can't take the server
-    down) and return what it printed. It starts in the notebook folder and finds the `squire`
-    module next to this file; the internal token lets it use /api/ on this server. This is not a
-    notebook change, and it must not hold WRITE_LOCK: the script's own writes need it."""
+    down) and return what it printed. Its code is pulled out of the JSON it's stored in and
+    written to a temp file (same name, so a traceback still points somewhere sensible) since
+    the file on disk isn't valid Python by itself. It starts in the notebook folder and finds
+    the `squire` module next to this file; the internal token lets it use /api/ on this server.
+    This is not a notebook change, and it must not hold WRITE_LOCK: the script's own writes
+    need it."""
     if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
         raise HttpError(400, "That is not a script")
+    code = read_script(path)
     env = {k: v for k, v in os.environ.items() if k not in ("SQUIRE_PASSWORD", "SQUIRE_API_READ_TOKEN")}
     env.update({
         "SQUIRE_URL": f"http://127.0.0.1:{PORT}",
@@ -334,18 +380,158 @@ def run_script(path):
         "PYTHONIOENCODING": "utf-8",
     })
     timed_out = False
-    try:
-        done = subprocess.run(
-            [sys.executable, str(path)], cwd=NOTEBOOK_DIR, env=env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_SECONDS,
-        )
-        output, exit_code = done.stdout, done.returncode
-    except subprocess.TimeoutExpired as err:  # the process has been killed by now
-        output, exit_code, timed_out = err.stdout or b"", None, True
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / path.name
+        tmp_path.write_text(code, encoding="utf-8")
+        try:
+            done = subprocess.run(
+                [sys.executable, str(tmp_path)], cwd=NOTEBOOK_DIR, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_SECONDS,
+            )
+            output, exit_code = done.stdout, done.returncode
+        except subprocess.TimeoutExpired as err:  # the process has been killed by now
+            output, exit_code, timed_out = err.stdout or b"", None, True
     text = output.decode("utf-8", errors="replace")
     if len(text) > SCRIPT_OUTPUT_LIMIT:
         text = text[:SCRIPT_OUTPUT_LIMIT] + "\n[output cut off]"
     return {"output": text, "exitCode": exit_code, "timedOut": timed_out}
+
+
+def put_script_schedule(path, schedule):
+    """Sets (or, with schedule=None, removes) a script's schedule, keeping its code and any
+    other metadata untouched."""
+    if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
+        raise HttpError(400, "That is not a script")
+    data = _load_script(path)
+    if schedule is None:
+        if "schedule" not in data:
+            return None
+        del data["schedule"]
+    else:
+        data["schedule"] = schedule
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {}
+
+
+# --- Scheduling ---
+# A script's "schedule" (in its own JSON, alongside "script") is {"enabled", "nextRun"
+# ("YYYY-MM-DDTHH:MM", local time, like a datetime-local input), "repeatEnabled", "repeat":
+# {"kind": "time"|"month"|"year", ...}}. A background thread (run_due_scripts_every_minute)
+# checks once a minute for schedules whose nextRun has passed, runs them, and reschedules them
+# (or, with no repeat, turns the schedule off — a one-shot run doesn't keep firing). "lastRun"
+# is set on the script each time its schedule fires it (not on a manual Run click).
+
+SCHEDULE_TIME_FORMAT = "%Y-%m-%dT%H:%M"
+
+
+def _parse_schedule_time(value):
+    return datetime.strptime(value, SCHEDULE_TIME_FORMAT)
+
+
+def _format_schedule_time(dt):
+    return dt.strftime(SCHEDULE_TIME_FORMAT)
+
+
+def _last_day_of_month(year, month):
+    return calendar.monthrange(year, month)[1]
+
+
+def _add_months_clamped(dt, months, day):
+    """`dt` advanced by `months`, with its day replaced by `day` (clamped to the last day of
+    the target month, e.g. the 31st in a 30-day month becomes the 30th)."""
+    total = dt.month - 1 + months
+    year = dt.year + total // 12
+    month = total % 12 + 1
+    return dt.replace(year=year, month=month, day=min(day, _last_day_of_month(year, month)))
+
+
+def _next_year_date(dt, month, day):
+    """The next time `month`/`day` occurs strictly after `dt`, keeping dt's time of day."""
+    candidate = dt.replace(month=month, day=min(day, _last_day_of_month(dt.year, month)))
+    if candidate <= dt:
+        candidate = candidate.replace(year=dt.year + 1, day=min(day, _last_day_of_month(dt.year + 1, month)))
+    return candidate
+
+
+def _compute_next_run(fired_at, schedule):
+    """The schedule's next run after one that fired at `fired_at`, per its repeat setting
+    (None if repeat is off, or the repeat is too degenerate to ever move forward)."""
+    if not schedule.get("repeatEnabled"):
+        return None
+    repeat = schedule.get("repeat") or {}
+    kind = repeat.get("kind")
+    if kind == "time":
+        delta = timedelta(hours=repeat.get("hours") or 0, minutes=repeat.get("minutes") or 0)
+        return fired_at + delta if delta > timedelta(0) else None
+    if kind == "month":
+        return _add_months_clamped(fired_at, 1, repeat.get("monthDay") or fired_at.day)
+    if kind == "year":
+        return _next_year_date(fired_at, repeat.get("yearMonth") or fired_at.month, repeat.get("yearDay") or fired_at.day)
+    return None
+
+
+def due_scripts(now):
+    """Every script path whose schedule is enabled and due to run by `now`."""
+    due = []
+    for path in notebook_items():
+        if not path.is_file() or path.suffix.lower() != SCRIPT_EXT:
+            continue
+        schedule = _load_script(path).get("schedule")
+        if not isinstance(schedule, dict) or not schedule.get("enabled") or not schedule.get("nextRun"):
+            continue
+        try:
+            if _parse_schedule_time(schedule["nextRun"]) <= now:
+                due.append(path)
+        except ValueError:
+            continue
+    return due
+
+
+def fire_schedule(path):
+    """Runs one due script and reschedules it, each under its own short WRITE_LOCK so the
+    long-running subprocess (run_script) never holds it, matching run_script's own
+    requirement."""
+    with WRITE_LOCK:
+        schedule = _load_script(path).get("schedule")
+        if not isinstance(schedule, dict) or not schedule.get("nextRun"):
+            return
+        try:
+            fired_at = _parse_schedule_time(schedule["nextRun"])
+        except ValueError:
+            return
+    run_script(path)
+    with WRITE_LOCK:
+        data = _load_script(path)
+        schedule = data.get("schedule")
+        if not isinstance(schedule, dict):
+            return  # the schedule was removed while the script was running
+        data["lastRun"] = _format_schedule_time(datetime.now())
+        next_run = _compute_next_run(fired_at, schedule)
+        # Fast-forward through anything still due (e.g. the server was off for a while)
+        # without running the script again for each occurrence skipped.
+        while next_run is not None and next_run <= datetime.now():
+            next_run = _compute_next_run(next_run, schedule)
+        if next_run is not None:
+            schedule["nextRun"] = _format_schedule_time(next_run)
+        else:
+            schedule["enabled"] = False
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        current = touch_last_saved()
+        broadcast({"type": "change", "lastSaved": current, "notes": [rel(path)], "tree": False})
+
+
+def run_due_scripts():
+    for path in due_scripts(datetime.now()):
+        fire_schedule(path)
+
+
+def run_due_scripts_every_minute():
+    while True:
+        time.sleep(60)
+        try:
+            run_due_scripts()
+        except Exception as err:
+            print(f"Scheduler error: {err}")
 
 
 def move_to_trash(path):
@@ -509,7 +695,8 @@ STATIC_TYPES = {
 # The routes that need the password (everything else is the public frontend).
 API_ROUTES = {
     "/files", "/folders", "/file", "/file-info", "/config", "/server-info", "/rename",
-    "/folder", "/folder-rename", "/move", "/image", "/script", "/run", "/open-notebook", "/events",
+    "/folder", "/folder-rename", "/move", "/image", "/script", "/script-schedule", "/run",
+    "/open-notebook", "/events",
 }
 
 
@@ -740,6 +927,81 @@ def api_get_note(path):
     return {"path": rel(path), "name": path.stem, "lastSaved": read_config().get("lastSaved", 0), **note}
 
 
+# A variable's name is letters and spaces only (matches NAME_RE in variables.ts); within one
+# list (a note's or the notebook's) names are compared trimmed and case-insensitively.
+VARIABLE_NAME_RE = re.compile(r"^[A-Za-z ]+$")
+VARIABLE_TYPES = {"text", "number", "boolean", "date", "time"}
+
+
+def variable_key(name):
+    return name.strip().lower()
+
+
+def find_variable(variables, name):
+    key = variable_key(name)
+    for variable in variables:
+        if isinstance(variable, dict) and variable_key(str(variable.get("name", ""))) == key:
+            return variable
+    return None
+
+
+def validate_variable_name(name):
+    if not isinstance(name, str) or not name.strip():
+        raise HttpError(400, "Missing name")
+    if not VARIABLE_NAME_RE.match(name.strip()):
+        raise HttpError(400, "A variable's name can only have letters and spaces")
+    return name.strip()
+
+
+def validate_variable_value(kind, value):
+    if kind not in VARIABLE_TYPES:
+        raise HttpError(400, f"type must be one of {', '.join(sorted(VARIABLE_TYPES))}")
+    if kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HttpError(400, "A number variable's value must be a number")
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            raise HttpError(400, "A boolean variable's value must be true or false")
+    elif kind == "date":
+        if not isinstance(value, str) or not re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+            raise HttpError(400, 'A date variable\'s value must look like "YYYY-MM-DD"')
+    elif kind == "time":
+        if not isinstance(value, str) or not re.match(r"^\d{2}:\d{2}$", value):
+            raise HttpError(400, 'A time variable\'s value must look like "HH:MM"')
+    elif not isinstance(value, str):
+        raise HttpError(400, "A text variable's value must be a string")
+
+
+def api_get_variable(variables, name):
+    variable = find_variable(variables, name)
+    if variable is None:
+        raise HttpError(404, "Variable not found")
+    return {"name": variable.get("name"), "type": variable.get("type"), "value": variable.get("value")}
+
+
+def api_set_variable(variables, name, kind, value):
+    """Create the variable, or change it if a variable with that name (trimmed, any case)
+    already exists in the list."""
+    name = validate_variable_name(name)
+    validate_variable_value(kind, value)
+    variable = find_variable(variables, name)
+    if variable is None:
+        variable = {"name": name}
+        variables.append(variable)
+    else:
+        variable["name"] = name
+    variable["type"] = kind
+    variable["value"] = value
+    return variable
+
+
+def api_delete_variable(variables, name):
+    variable = find_variable(variables, name)
+    if variable is None:
+        raise HttpError(404, "Variable not found")
+    variables.remove(variable)
+
+
 def session_token():
     """What the session cookie holds: derived from the password, so it stays valid across
     restarts and stops being valid when the password changes."""
@@ -859,6 +1121,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(api_get_block(notebook_path(params.get("path")), params.get("id")))
         elif route == "/api/note":
             self._send_json(api_get_note(notebook_path(params.get("path"))))
+        elif route == "/api/variable":
+            name = params.get("name")
+            if not name:
+                raise HttpError(400, "Missing name")
+            if params.get("path"):
+                note = api_note_for_edit(notebook_path(params.get("path")))
+                variables = note.get("metadata", {}).get("variables") or []
+            else:
+                variables = read_config().get("variables") or []
+            self._send_json(api_get_variable(variables, name))
         elif route.startswith("/api/"):
             raise HttpError(404, "Not found")
         elif route == "/files":
@@ -883,6 +1155,17 @@ class Handler(BaseHTTPRequestHandler):
             if not path.is_file():
                 raise HttpError(404, "File not found")
             self._send_json(file_times(path))
+        elif route == "/script":
+            path = notebook_path(params.get("path"))
+            if not path.is_file():
+                raise HttpError(404, "File not found")
+            self._send(read_script(path), "text/plain; charset=utf-8", 200)
+        elif route == "/script-schedule":
+            path = notebook_path(params.get("path"))
+            if not path.is_file():
+                raise HttpError(404, "File not found")
+            data = _load_script(path)
+            self._send_json({"schedule": data.get("schedule"), "lastRun": data.get("lastRun")})
         elif route == "/config":
             self._send_json(read_config())
         elif route == "/server-info":
@@ -961,6 +1244,43 @@ class Handler(BaseHTTPRequestHandler):
             # Without a lastSaved the write just goes ahead; with one it must still be current.
             self._write(params, lambda: put_note(path, note, body), check="lastSaved" in params, notes=[rel(path)], tree=not path.exists())
             return
+        if route == "/api/script":
+            self._need_write_token()
+            path = notebook_path(params.get("path"))
+            text = self._body()
+            self._write(params, lambda: put_script(path, text), check="lastSaved" in params, notes=[rel(path)], tree=not path.exists())
+            return
+        if route == "/api/variable":
+            self._need_write_token()
+            name = params.get("name")
+            if not name:
+                raise HttpError(400, "Missing name")
+            try:
+                body = json.loads(self._body() or "{}")
+            except ValueError:
+                body = None
+            if not isinstance(body, dict) or "type" not in body or "value" not in body:
+                raise HttpError(400, 'Body must be {"type", "value"}')
+            if params.get("path"):
+                path = notebook_path(params.get("path"))
+
+                def action():
+                    note = api_note_for_edit(path)
+                    variables = note.setdefault("metadata", {}).setdefault("variables", [])
+                    variable = api_set_variable(variables, name, body["type"], body["value"])
+                    api_save_note(path, note)
+                    return {"variable": variable}
+
+                self._write(params, action, check="lastSaved" in params, notes=[rel(path)])
+            else:
+                # A notebook variable lives in the config file, which (like /config) isn't part
+                # of lastSaved/live sync: an open window only sees it on its next reload.
+                with WRITE_LOCK:
+                    config = read_config()
+                    variable = api_set_variable(config.setdefault("variables", []), name, body["type"], body["value"])
+                    write_config(config)
+                self._send_json({"variable": variable})
+            return
         if route == "/image":
             path = notebook_path(params.get("path"))
             data = self._raw_body()
@@ -970,6 +1290,16 @@ class Handler(BaseHTTPRequestHandler):
             path = notebook_path(params.get("path"))
             text = self._body()
             self._write(params, lambda: put_script(path, text), notes=[rel(path)], tree=not path.exists())
+            return
+        if route == "/script-schedule":
+            path = notebook_path(params.get("path"))
+            try:
+                schedule = json.loads(self._body() or "{}").get("schedule")
+            except ValueError:
+                raise HttpError(400, "Body must be JSON")
+            if schedule is not None and not isinstance(schedule, dict):
+                raise HttpError(400, '"schedule" must be an object or null')
+            self._write(params, lambda: put_script_schedule(path, schedule), notes=[rel(path)])
             return
         body = self._body()
         if route == "/config":
@@ -1061,6 +1391,27 @@ class Handler(BaseHTTPRequestHandler):
             self._need_write_token()
             path = notebook_path(params.get("path"))
             self._write(params, lambda: delete_folder(path), check="lastSaved" in params, tree=True)
+        elif route == "/api/variable":
+            self._need_write_token()
+            name = params.get("name")
+            if not name:
+                raise HttpError(400, "Missing name")
+            if params.get("path"):
+                path = notebook_path(params.get("path"))
+
+                def action():
+                    note = api_note_for_edit(path)
+                    api_delete_variable(note.get("metadata", {}).get("variables") or [], name)
+                    api_save_note(path, note)
+                    return {}
+
+                self._write(params, action, check="lastSaved" in params, notes=[rel(path)])
+            else:
+                with WRITE_LOCK:
+                    config = read_config()
+                    api_delete_variable(config.get("variables") or [], name)
+                    write_config(config)
+                self._send_json({})
         elif route == "/file":
             path = notebook_path(params.get("path"))
             self._write(params, lambda: delete_file(path), notes=[rel(path)], tree=True)
@@ -1153,6 +1504,7 @@ if __name__ == "__main__":
     migrate_config()
     purge_trash()
     threading.Thread(target=purge_trash_hourly, daemon=True).start()
+    threading.Thread(target=run_due_scripts_every_minute, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Serving notebook {NOTEBOOK_DIR}")
     print(f"  On this machine: http://localhost:{PORT}")

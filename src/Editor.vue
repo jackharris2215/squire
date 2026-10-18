@@ -28,7 +28,9 @@ import {
   config,
   createNewNote,
   createNote,
+  defaultScriptSchedule,
   deleteNote,
+  fetchScriptSchedule,
   findAnyBlock,
   findBlockPosition as findPosition,
   imageLinkText,
@@ -40,13 +42,16 @@ import {
   noteCache,
   redoEdit,
   renameEntry,
+  saveScriptSchedule,
   unhookBlock,
   placeBlock,
   saveStateFor,
+  scriptLinkText,
   selectFile,
   toggleBookmark,
   undoEdit,
   validateTitle,
+  type ScriptSchedule,
 } from './store'
 
 // The right side of the app: the note's header (title, ⋮ menu, close) and the
@@ -170,6 +175,85 @@ const textareaRefs = new Map<string, HTMLTextAreaElement>()
 const showNoteMenu = ref(false)
 const noteMenuRef = ref<HTMLElement | null>(null)
 
+// A script's schedule menu: same spot and look as a note's settings menu, but for the
+// schedule instead. Fetched only while the menu is open, not with every script (most never
+// have one); edits save immediately, like the note settings above.
+const showScheduleMenu = ref(false)
+const scheduleMenuRef = ref<HTMLElement | null>(null)
+const schedule = ref<ScriptSchedule | null>(null)
+const scheduleLastRun = ref<string | null>(null)
+
+watch(showScheduleMenu, async (open) => {
+  if (!open || !props.path) return
+  const data = await fetchScriptSchedule(props.path)
+  schedule.value = data?.schedule ?? defaultScriptSchedule()
+  scheduleLastRun.value = data?.lastRun ?? null
+})
+
+// Switching to a different pane content (another script, a note, nothing) closes the menu
+// and drops the cached schedule, the same way watch(note, ...) below does for notes.
+watch(
+  () => props.path,
+  () => {
+    showScheduleMenu.value = false
+    schedule.value = null
+    scheduleLastRun.value = null
+  },
+)
+
+function commitSchedule() {
+  if (props.path && schedule.value) saveScriptSchedule(props.path, schedule.value)
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0')
+}
+
+// "YYYY-MM-DDTHH:MM" in local time, for a freshly-checked "Next run" to start on
+// something sensible (an hour from now) instead of empty date/time inputs.
+function localDateTimeInput(d: Date) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function setScheduleEnabled(enabled: boolean) {
+  if (!schedule.value) return
+  schedule.value.enabled = enabled
+  if (enabled && !schedule.value.nextRun) schedule.value.nextRun = localDateTimeInput(new Date(Date.now() + 3600_000))
+  commitSchedule()
+}
+
+function setRepeatEnabled(enabled: boolean) {
+  if (!schedule.value) return
+  schedule.value.repeatEnabled = enabled
+  commitSchedule()
+}
+
+const nextRunDate = computed({
+  get: () => schedule.value?.nextRun?.slice(0, 10) ?? '',
+  set: (date: string) => {
+    if (!schedule.value) return
+    schedule.value.nextRun = `${date}T${schedule.value.nextRun?.slice(11, 16) || '00:00'}`
+    commitSchedule()
+  },
+})
+
+const nextRunTime = computed({
+  get: () => schedule.value?.nextRun?.slice(11, 16) ?? '',
+  set: (time: string) => {
+    if (!schedule.value) return
+    schedule.value.nextRun = `${schedule.value.nextRun?.slice(0, 10) || localDateTimeInput(new Date()).slice(0, 10)}T${time}`
+    commitSchedule()
+  },
+})
+
+function formatScheduleTime(value: string | null) {
+  if (!value) return null
+  const [datePart = '', timePart = ''] = value.split('T')
+  const [y, m, d] = datePart.split('-').map(Number)
+  const [h, min] = timePart.split(':').map(Number)
+  return new Date(y ?? 0, (m ?? 1) - 1, d ?? 1, h ?? 0, min ?? 0).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+}
+
 // The note's width: S is the narrowest. Stored in the note's metadata, and only written
 // once changed; until then the default width from the settings applies (small if unset).
 const WIDTHS = [
@@ -240,6 +324,7 @@ function resetFontSize() {
 function locateInBrowser() {
   if (!props.path) return
   showNoteMenu.value = false
+  showScheduleMenu.value = false
   config.value.sidebarTab = 'files'
   config.value.sidebarCollapsed = false
   nextTick(() => revealInTree(props.path!))
@@ -295,6 +380,7 @@ const vTitleFocus = {
 
 function startTitleRename() {
   showNoteMenu.value = false
+  showScheduleMenu.value = false
   titleDraft.value = currentTitle.value
   titleError.value = null
   renamingTitle.value = true
@@ -303,7 +389,7 @@ function startTitleRename() {
 async function commitTitleRename(fromEnter: boolean) {
   if (!renamingTitle.value || titleBusy || !props.path) return
   titleBusy = true
-  const error = await renameEntry('note', props.path, titleDraft.value.trim())
+  const error = await renameEntry(isScript.value ? 'script' : 'note', props.path, titleDraft.value.trim())
   titleBusy = false
   if (error && fromEnter) titleError.value = error
   else renamingTitle.value = false
@@ -359,9 +445,11 @@ const wordCount = computed(() => {
 
 // Close the ⋮ menu when clicking anywhere outside it.
 function onWindowClick(event: MouseEvent) {
-  if (!showNoteMenu.value) return
-  if (noteMenuRef.value && !noteMenuRef.value.contains(event.target as Node)) {
+  if (showNoteMenu.value && noteMenuRef.value && !noteMenuRef.value.contains(event.target as Node)) {
     showNoteMenu.value = false
+  }
+  if (showScheduleMenu.value && scheduleMenuRef.value && !scheduleMenuRef.value.contains(event.target as Node)) {
+    showScheduleMenu.value = false
   }
 }
 
@@ -507,7 +595,9 @@ function acceptSuggestion(entry: { title: string; path: string }) {
   // If a closing ]] is already right after the cursor, reuse it.
   const after = el.value.slice(el.selectionStart)
   const rest = after.startsWith(']]') ? after.slice(2) : after
-  const inserted = `${isImagePath(entry.path) || isPdfPath(entry.path) ? imageLinkText(entry.path) : entry.title}]]`
+  const inserted = `${
+    isImagePath(entry.path) || isPdfPath(entry.path) ? imageLinkText(entry.path) : isScriptPath(entry.path) ? scriptLinkText(entry.path) : entry.title
+  }]]`
   block.content = el.value.slice(0, open.start) + inserted + rest
   const caretAt = open.start + inserted.length
   closeSuggest()
@@ -1524,6 +1614,105 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+      <div v-else-if="isScript" ref="scheduleMenuRef">
+        <button class="icon-button" title="Script schedule" aria-label="Script schedule" @click="showScheduleMenu = !showScheduleMenu">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        <div v-if="showScheduleMenu && schedule" class="note-menu schedule-menu">
+          <label class="settings-row">
+            <input type="checkbox" class="checkbox" :checked="schedule.enabled" @change="setScheduleEnabled(($event.target as HTMLInputElement).checked)" />
+            Next run
+          </label>
+          <div v-if="schedule.enabled" class="settings-group schedule-datetime">
+            <input type="date" class="schedule-input" v-model="nextRunDate" />
+            <input type="time" class="schedule-input" v-model="nextRunTime" />
+          </div>
+          <div class="context-separator" />
+          <label class="settings-row" :class="{ disabled: !schedule.enabled }">
+            <input
+              type="checkbox"
+              class="checkbox"
+              :disabled="!schedule.enabled"
+              :checked="schedule.repeatEnabled"
+              @change="setRepeatEnabled(($event.target as HTMLInputElement).checked)"
+            />
+            Repeat
+          </label>
+          <div v-if="schedule.enabled && schedule.repeatEnabled" class="settings-group schedule-repeat">
+            <label class="settings-row">
+              <input type="radio" class="radio" name="repeat-kind" value="time" v-model="schedule.repeat.kind" @change="commitSchedule" />
+              Every
+              <input
+                type="number"
+                min="0"
+                class="schedule-input schedule-input-narrow"
+                v-model.number="schedule.repeat.hours"
+                :disabled="schedule.repeat.kind !== 'time'"
+                @change="commitSchedule"
+              />
+              h
+              <input
+                type="number"
+                min="0"
+                max="59"
+                class="schedule-input schedule-input-narrow"
+                v-model.number="schedule.repeat.minutes"
+                :disabled="schedule.repeat.kind !== 'time'"
+                @change="commitSchedule"
+              />
+              m
+            </label>
+            <label class="settings-row">
+              <input type="radio" class="radio" name="repeat-kind" value="month" v-model="schedule.repeat.kind" @change="commitSchedule" />
+              Day
+              <input
+                type="number"
+                min="1"
+                max="31"
+                class="schedule-input schedule-input-narrow"
+                v-model.number="schedule.repeat.monthDay"
+                :disabled="schedule.repeat.kind !== 'month'"
+                @change="commitSchedule"
+              />
+              of every month
+            </label>
+            <label class="settings-row">
+              <input type="radio" class="radio" name="repeat-kind" value="year" v-model="schedule.repeat.kind" @change="commitSchedule" />
+              Every
+              <input
+                type="number"
+                min="1"
+                max="12"
+                class="schedule-input schedule-input-narrow"
+                v-model.number="schedule.repeat.yearMonth"
+                :disabled="schedule.repeat.kind !== 'year'"
+                @change="commitSchedule"
+              />
+              /
+              <input
+                type="number"
+                min="1"
+                max="31"
+                class="schedule-input schedule-input-narrow"
+                v-model.number="schedule.repeat.yearDay"
+                :disabled="schedule.repeat.kind !== 'year'"
+                @change="commitSchedule"
+              />
+              (month/day)
+            </label>
+          </div>
+          <div class="context-separator" />
+          <button class="context-item" @click="locateInBrowser">Locate in browser</button>
+          <button class="context-item" @click="startTitleRename">Rename</button>
+          <button class="settings-delete" @click="deleteNote(props.path)">Delete Script</button>
+          <div v-if="scheduleLastRun" class="note-times">
+            <div><span>Last ran</span>{{ formatScheduleTime(scheduleLastRun) }}</div>
+          </div>
+        </div>
+      </div>
       <div v-if="note" class="header-history">
         <button class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" :disabled="!canUndo" @mousedown.prevent @click="undo">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1579,10 +1768,10 @@ onUnmounted(() => {
         <div v-if="note || isImage || isPdf || isScript" class="header-actions">
           <button class="icon-button" @click="emit('close')">✕</button>
         </div>
-        <template v-if="rightPanelButton">
+        <span v-if="rightPanelButton" class="right-panel-toggle-group">
           <span class="header-break" />
           <RightPanelToggle />
-        </template>
+        </span>
       </div>
     </header>
     <main
@@ -1815,6 +2004,27 @@ onUnmounted(() => {
   border-color: var(--color-accent);
 }
 
+.radio {
+  appearance: none;
+  flex-shrink: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1px solid var(--color-border-hover);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+}
+
+.radio:hover {
+  border-color: var(--color-accent);
+}
+
+.radio:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
 .content-column {
   position: relative; /* the footer floats over its bottom-right corner */
   flex: 1;
@@ -1943,6 +2153,13 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
+/* Doesn't affect layout itself (the header-break and RightPanelToggle stay direct flex
+   items of .header-right); only exists so the pair can be hidden together on mobile,
+   where the right panel is a drawer opened by its own floating button instead. */
+.right-panel-toggle-group {
+  display: contents;
+}
+
 /* A thin line between groups of header buttons. */
 .header-break {
   align-self: center;
@@ -1971,6 +2188,60 @@ onUnmounted(() => {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   padding: 0.6rem 0.75rem;
   z-index: 10;
+}
+
+/* Wider than a plain .note-menu: a date and a time input side by side need the room. */
+.schedule-menu {
+  width: 270px;
+}
+
+.settings-row.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.schedule-datetime {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.schedule-repeat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.schedule-repeat .settings-row {
+  margin-bottom: 0;
+}
+
+.schedule-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.3rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--color-text-strong);
+  background: rgb(var(--tint) / 0.06);
+  border: 1px solid var(--color-border-hover);
+  border-radius: 3px;
+  -moz-appearance: textfield; /* Firefox's number spinner */
+}
+
+.schedule-input::-webkit-outer-spin-button,
+.schedule-input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none; /* Chrome/Safari/Edge's number spinner */
+}
+
+.schedule-input:disabled {
+  opacity: 0.5;
+}
+
+.schedule-input-narrow {
+  flex: 0 0 3.2rem;
 }
 
 /* Bottom-right corner, only as wide as its contents; the save status is last. */
@@ -2011,6 +2282,12 @@ onUnmounted(() => {
 @media (max-width: 700px) {
   .editor {
     padding: 1.25rem 0.5rem;
+  }
+
+  /* The right panel is a drawer on mobile, opened by its own floating button
+     (App.vue) instead of this header button. */
+  .right-panel-toggle-group {
+    display: none;
   }
 }
 
@@ -2467,7 +2744,8 @@ onUnmounted(() => {
   border-color: var(--color-accent);
 }
 
-.block :deep(.widget-bool) {
+.block :deep(.widget-bool),
+.block :deep(.widget-run) {
   cursor: pointer;
 }
 

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import type { Variable } from './types'
-import { config, noteCache, queueConfigSave } from './store'
+import { config, noteCache, queueConfigSave, runScript } from './store'
 import { DEFAULT_DATE_FORMAT, DEFAULT_DECIMALS, formatDate } from './notebookSettings'
 
 function pad(n: number): string {
@@ -363,10 +363,15 @@ export function widgetAccepts(kind: string, type: Variable['type']): boolean {
 export function handleWidgetEvent(event: Event, notePath: string | null): boolean {
   const el = (event.target as HTMLElement | null)?.closest?.('[data-widget]')
   if (!el) return false
+  const widget = (el as HTMLElement).dataset.widget
+  // The run widget isn't a variable (it has no data-name): just run the script.
+  if (widget === 'run') {
+    if (event.type === 'click') runScript((el as HTMLElement).dataset.path ?? '')
+    return true
+  }
   const variable = findVariable((el as HTMLElement).dataset.name ?? '', notePath)
   if (!variable) return true
 
-  const widget = (el as HTMLElement).dataset.widget
   if (widget === 'checkboxes') {
     // Clicking box n sets the variable to n; clicking the last ticked box un-ticks it.
     const n = Number((event.target as HTMLElement).closest<HTMLElement>('[data-index]')?.dataset.index)

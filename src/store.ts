@@ -89,6 +89,19 @@ export function isScriptPath(path: string): boolean {
 
 export const scriptList = computed(() => files.value.filter(isScriptPath))
 
+// Name (without ".py"), filename, or full path -> path, for resolving the {{run}} widget
+// (markdown.ts). Scripts don't enforce unique names the way notes do, so like imageIndex,
+// if two share a name the first one wins for it; the full path always works.
+export const scriptIndex = computed(() => {
+  const index: Record<string, string> = {}
+  for (const path of scriptList.value) {
+    index[path] = path
+    index[baseName(path)] ??= path
+    index[nameFromPath(path)] ??= path
+  }
+  return index
+})
+
 // Every image in the notebook, for the sidebar. Unlike notes, an image's content
 // never loads into the client; it's just a path the server can serve, so this
 // comes straight from `files` rather than the note-detecting pass in
@@ -111,6 +124,24 @@ export const imageIndex = computed(() => {
 export function imageLinkText(path: string): string {
   const name = baseName(path)
   return imageIndex.value[name] === path ? name : path
+}
+
+// What a link to this script (or its {{run}} widget) should say: its filename, or
+// its full path when another script has the same filename.
+export function scriptLinkText(path: string): string {
+  const name = baseName(path)
+  return scriptIndex.value[name] === path ? name : path
+}
+
+// What a {{run}} button inserted for this script should show as its label: its
+// name, special characters (underscores, dashes, etc.) turned into spaces, title-cased.
+export function scriptButtonLabel(path: string): string {
+  return nameFromPath(path)
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
 }
 // Every note loaded so far, by path. Switching to a cached note is instant.
 // Reactive, so a pane showing a note by its path updates when the note loads or
@@ -354,6 +385,48 @@ export interface ScriptRun {
   error: string | null // the run could not be started (or the script not saved)
 }
 
+// A script's schedule, stored alongside its code (server/server.py). "repeat" keeps every
+// kind's fields at once (not just the active one), so switching the radio doesn't lose what
+// was typed into the others.
+export interface ScriptScheduleRepeat {
+  kind: 'time' | 'month' | 'year'
+  hours: number // kind 'time': run again this many hours...
+  minutes: number // ...and minutes after the last run
+  monthDay: number // kind 'month': which day of the month (1-31, clamped to the shortest)
+  yearMonth: number // kind 'year': which month (1-12)...
+  yearDay: number // ...and day (1-31, clamped) to run on every year
+}
+
+export interface ScriptSchedule {
+  enabled: boolean // the "Next run" checkbox
+  nextRun: string | null // "YYYY-MM-DDTHH:MM", local time
+  repeatEnabled: boolean
+  repeat: ScriptScheduleRepeat
+}
+
+export function defaultScriptSchedule(): ScriptSchedule {
+  return {
+    enabled: false,
+    nextRun: null,
+    repeatEnabled: false,
+    repeat: { kind: 'time', hours: 1, minutes: 0, monthDay: 1, yearMonth: 1, yearDay: 1 },
+  }
+}
+
+// Fetched only when a script's schedule menu is opened (not with every script load, since
+// most scripts never have one).
+export async function fetchScriptSchedule(path: string): Promise<{ schedule: ScriptSchedule | null; lastRun: string | null } | null> {
+  const res = await fetch(`${SERVER_URL}/script-schedule?path=${encodeURIComponent(path)}`)
+  return res.ok ? await res.json() : null
+}
+
+export function saveScriptSchedule(path: string, schedule: ScriptSchedule): Promise<unknown> {
+  return serverWrite(`/script-schedule?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ schedule }),
+  })
+}
+
 export const scriptCache = reactive(new Map<string, ScriptState>())
 export const scriptRuns = reactive(new Map<string, ScriptRun>())
 const scriptTimers = new Map<string, ReturnType<typeof setTimeout>>() // pending autosaves
@@ -366,7 +439,7 @@ for note in squire.notes():
 `
 
 async function fetchScriptText(path: string): Promise<string | null> {
-  const res = await fetch(`${SERVER_URL}/file?path=${encodeURIComponent(path)}`)
+  const res = await fetch(`${SERVER_URL}/script?path=${encodeURIComponent(path)}`)
   return res.ok ? await res.text() : null
 }
 
@@ -739,14 +812,23 @@ function freeName(name: string, prefix: string): string {
   return `${name} (${n})`
 }
 
-// `blocks` lets a caller (the markdown importer, say) start the note with content
-// already in it; a plain new note leaves it empty, same as before.
-export async function createNote(title: string, folder = '', blocks: Block[][] = []) {
+// `blocks`/`metadata`/`floating` let a caller (the markdown importer, a template) start the
+// note with content already in it; a plain new note leaves it empty, same as before. The
+// title is always the new note's own filename, never anything from the template — a note has
+// no separate title field to carry over.
+export async function createNote(
+  title: string,
+  folder = '',
+  blocks: Block[][] = [],
+  metadata: Note['metadata'] = {},
+  floating?: Note['floating'],
+) {
   const prefix = folder ? `${folder}/` : ''
   const name = freeName(title, prefix)
   const filename = `${prefix}${name}.json`
 
-  const newNote: Note = { metadata: {}, blocks }
+  const newNote: Note = { metadata: { ...metadata }, blocks }
+  if (floating?.length) newNote.floating = floating
   const { ok } = await serverWrite(`/file?path=${encodeURIComponent(filename)}`, {
     method: 'PUT',
     body: JSON.stringify(newNote, null, 2),
@@ -760,12 +842,24 @@ export async function createNote(title: string, folder = '', blocks: Block[][] =
   selectFile(filename)
 }
 
+// A template's content (by title, like a [[link]]), for openDailyNote/openWeeklyNote below.
+// null if there's no note by that name (nothing to start from, so a plain blank note).
+async function templateContent(title: string): Promise<Pick<Note, 'blocks' | 'metadata' | 'floating'> | null> {
+  const path = noteIndex.value[title]
+  if (!path) return null
+  await ensureLoaded(path)
+  const template = noteCache.get(path)
+  if (!template) return null
+  return JSON.parse(JSON.stringify({ blocks: template.blocks, metadata: template.metadata, floating: template.floating }))
+}
+
 // Opens today's daily note, made first if it doesn't exist (the folder is made along
-// with it, by the server). Its folder and name format are settings (notebookSettings.ts).
+// with it, by the server). Its folder, name format and template are settings (notebookSettings.ts).
 export async function openDailyNote() {
   const folder = folderOrDefault(config.value.dailyNoteFolder, DEFAULT_DAILY_FOLDER)
   const title = sanitizeName(formatDate(config.value.dailyNoteFormat ?? DEFAULT_DAILY_FORMAT))
-  await openDatedNote(folder, title)
+  const template = config.value.dailyTemplateEnabled && config.value.dailyTemplate ? config.value.dailyTemplate : null
+  await openDatedNote(folder, title, template)
 }
 
 // Opens this week's weekly note, the same way; its format's yyyy is the week's year, and
@@ -775,14 +869,16 @@ export async function openWeeklyNote() {
   const title = sanitizeName(
     formatDate(config.value.weeklyNoteFormat ?? DEFAULT_WEEKLY_FORMAT, new Date(), true, config.value.firstDayOfWeek),
   )
-  await openDatedNote(folder, title)
+  const template = config.value.weeklyTemplateEnabled && config.value.weeklyTemplate ? config.value.weeklyTemplate : null
+  await openDatedNote(folder, title, template)
 }
 
-async function openDatedNote(folder: string, title: string) {
+async function openDatedNote(folder: string, title: string, templateTitle: string | null) {
   const path = `${folder ? `${folder}/` : ''}${title}.json`
   if (files.value.includes(path)) return selectFile(path)
   if (folder && !folders.value.includes(folder)) folders.value.push(folder)
-  await createNote(title, folder)
+  const content = templateTitle ? await templateContent(templateTitle) : null
+  await createNote(title, folder, content?.blocks ?? [], content?.metadata ?? {}, content?.floating)
 }
 
 // A new note goes in the folder from the settings (the top level unless set).

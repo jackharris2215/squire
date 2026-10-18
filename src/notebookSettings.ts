@@ -49,6 +49,13 @@ export function folderOrDefault(value: string | undefined, fallback: string): st
   return value === undefined ? fallback : value
 }
 
+// A daily/weekly template's name (a note's title, not a path): no existence check, since
+// a template that doesn't exist (yet, or any more) just means the next note isn't started
+// from one.
+export function checkTemplateName(input: string): string | null {
+  return input.trim() ? null : 'Enter a note name.'
+}
+
 // --- Dates ---
 
 // Which day a week starts on, and so which week is week 1: with Monday that is ISO
@@ -160,7 +167,8 @@ export function checkWholeNumber(input: string, range: { min: number; max: numbe
 // notes, notebook variables and panel sizes). "Reset settings" removes exactly these.
 export const SETTING_KEYS = [
   'theme', 'accentColor', 'font', 'defaultNoteWidth', 'showTitleByDefault',
-  'dailyNoteFolder', 'dailyNoteFormat', 'weeklyNoteFolder', 'weeklyNoteFormat', 'attachmentsFolder',
+  'dailyNoteFolder', 'dailyNoteFormat', 'dailyTemplateEnabled', 'dailyTemplate',
+  'weeklyNoteFolder', 'weeklyNoteFormat', 'weeklyTemplateEnabled', 'weeklyTemplate', 'attachmentsFolder',
   'autosaveDelayMs', 'stalenessCheckSeconds',
   'enterBehavior', 'autoPairBrackets', 'linkSuggestImages', 'linkSuggestPdfs',
   'trashRetentionDays', 'newNoteFolder', 'confirmDelete', 'showImagesInTree', 'showPdfsInTree',

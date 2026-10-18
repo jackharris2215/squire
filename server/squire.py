@@ -155,3 +155,23 @@ def move(name, folder):
 
 def create_folder(path):
     return _api("POST", "folder", {"path": path})
+
+
+def get_variable(variable, name=None):
+    """A variable as {"name", "type", "value"}: a note's variable (give `name`) or a notebook
+    variable (leave `name` out). Raises SquireError if there is no such variable."""
+    return _api("GET", "variable", {"name": variable, "path": _path(name) if name else None})
+
+
+def set_variable(variable, type, value, name=None):
+    """Create a variable, or change it if one with that name already exists. `type` is "text",
+    "number", "boolean", "date" ("YYYY-MM-DD") or "time" ("HH:MM"); `value` must match it. Give
+    `name` for a note's variable, leave it out for a notebook variable."""
+    params = {"name": variable, "path": _path(name) if name else None}
+    return _api("PUT", "variable", params, {"type": type, "value": value})
+
+
+def delete_variable(variable, name=None):
+    """Remove a variable. Give `name` for a note's variable, leave it out for a notebook
+    variable."""
+    return _api("DELETE", "variable", {"name": variable, "path": _path(name) if name else None})

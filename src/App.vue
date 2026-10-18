@@ -162,6 +162,16 @@ function closeContextMenu() {
   blockMenus.value?.close()
 }
 
+// A right-click's mousedown would otherwise blur whatever block is being edited (the
+// browser's default action for a mousedown outside it, same as a left-click) before the
+// contextmenu event even fires. Suppressing just that default action, everywhere, keeps
+// editing focus through any right-click; it doesn't touch left-clicks (which should still
+// blur to move the focus) or the contextmenu event itself (preventDefault on mousedown
+// doesn't cancel it).
+function ignoreRightMousedown(event: MouseEvent) {
+  if (event.button === 2) event.preventDefault()
+}
+
 const quickSwitcher = ref<InstanceType<typeof QuickSwitcher> | null>(null)
 
 // The gear in the left rail swaps the editor for the settings page (the notes stay
@@ -281,6 +291,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onWindowKeydown)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('contextmenu', closeContextMenu)
+  window.addEventListener('mousedown', ignoreRightMousedown)
 })
 </script>
 
@@ -483,6 +494,30 @@ onMounted(async () => {
       <LinksList v-else-if="config.rightPanelTab === 'links'" />
       <NoteInfo v-else />
     </aside>
+    <button
+      v-if="isMobile && !mobileDrawer"
+      class="mobile-drawer-fab left"
+      title="Open sidebar"
+      aria-label="Open sidebar"
+      @click="toggleDrawer('left')"
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M9 4v16" />
+      </svg>
+    </button>
+    <button
+      v-if="isMobile && !mobileDrawer"
+      class="mobile-drawer-fab right"
+      title="Open right panel"
+      aria-label="Open right panel"
+      @click="toggleDrawer('right')"
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M15 4v16" />
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -822,6 +857,33 @@ onMounted(async () => {
     inset: 0;
     z-index: 18;
     background: rgba(0, 0, 0, 0.4);
+  }
+
+  /* Opens a drawer without reaching for the icon rail or right panel header, both of
+     which can be out of thumb's reach; hidden once a drawer is open since the drawer
+     itself (and its backdrop) already cover that. */
+  .mobile-drawer-fab {
+    position: fixed;
+    bottom: 1.25rem;
+    z-index: 15; /* over the note, under the drawers and their backdrop */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 50%;
+    color: var(--color-text-strong);
+    background: var(--color-panel);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+
+  .mobile-drawer-fab.left {
+    left: 1.25rem;
+  }
+
+  .mobile-drawer-fab.right {
+    right: 1.25rem;
   }
 }
 </style>

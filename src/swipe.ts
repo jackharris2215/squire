@@ -3,13 +3,17 @@ import { isMobile, mobileDrawer } from './mobile'
 // Swiping sideways on a small screen opens and closes the drawers: a swipe right opens the
 // sidebar (or closes the right panel), a swipe left opens the right panel (or closes the
 // sidebar). A touch is ignored if it starts somewhere sideways movement already means
-// something (a text box, a slider, a table or anything else that scrolls sideways, a
-// floating block, a pannable image), if a second finger comes down, or if text is being
-// selected, so typing and editing are never mistaken for a swipe.
+// something (a block being edited, a slider, a table, a floating block, a pannable image, or
+// anything else that scrolls sideways, such as a script's unwrapped code), if a second finger
+// comes down, or if text is being selected, so typing and editing are never mistaken for a
+// swipe. A block being edited (.block-input) is always ignored outright, since it's usually
+// short enough to never scroll sideways itself; anything else that might scroll sideways (the
+// script editor's textarea, say) is only ignored when it actually does, so swiping still works
+// over it otherwise — a script view has no other room to start a swipe from.
 
 const MIN_DISTANCE = 60 // px sideways
 const MAX_MS = 600
-const IGNORED = 'textarea, input, select, [contenteditable], table, .table-block, .floating, .image-preview'
+const IGNORED = 'input, select, [contenteditable], table, .table-block, .floating, .image-preview, .block-input'
 
 function startsWhereSidewaysMeansSomething(target: EventTarget | null): boolean {
   let el = target instanceof Element ? target : null

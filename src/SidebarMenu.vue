@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import type { BookmarkFolder, SidebarRow } from './types'
 import { renaming } from './overlay'
+import { canInsertAtCursor, insertAtCursor } from './insert'
 import {
   allFolderPaths,
   copyNote,
@@ -13,8 +14,11 @@ import {
   deleteNote,
   isBookmarked,
   moveItem,
+  nameFromPath,
   openInSplit,
   nextNewNoteTitle,
+  scriptButtonLabel,
+  scriptLinkText,
   selectFile,
   toggleBookmark,
 } from './store'
@@ -27,6 +31,7 @@ interface MenuState {
   kind: 'note' | 'folder' | 'image' | 'pdf' | 'script' | 'bookmark-folder'
   path: string // notebook path; unused for a bookmark folder
   id?: string // bookmark folder id; only set for kind 'bookmark-folder'
+  canInsert: boolean // a block is being edited, so "Insert at cursor" isn't disabled
   x: number
   y: number
 }
@@ -47,12 +52,12 @@ async function clampToScreen() {
 }
 
 async function open(event: MouseEvent, row: SidebarRow) {
-  menu.value = { kind: row.kind, path: row.path, x: event.clientX, y: event.clientY }
+  menu.value = { kind: row.kind, path: row.path, canInsert: canInsertAtCursor(), x: event.clientX, y: event.clientY }
   await clampToScreen()
 }
 
 async function openBookmarkFolder(event: MouseEvent, folder: BookmarkFolder) {
-  menu.value = { kind: 'bookmark-folder', path: '', id: folder.id, x: event.clientX, y: event.clientY }
+  menu.value = { kind: 'bookmark-folder', path: '', id: folder.id, canInsert: false, x: event.clientX, y: event.clientY }
   await clampToScreen()
 }
 
@@ -152,6 +157,24 @@ function copy() {
   copyNote(path)
 }
 
+// Inserts [[title]] (a note) or [[file.ext]] (a script, same as an image or PDF link)
+// at the cursor of the block being edited, same mechanism as the variable menu.
+function insertLink() {
+  if (!menu.value) return
+  const { kind, path } = menu.value
+  const text = kind === 'script' ? scriptLinkText(path) : nameFromPath(path)
+  close()
+  insertAtCursor(`[[${text}]]`)
+}
+
+// Inserts a {{run}} button for this script, labeled with its title-cased name.
+function insertRunButton() {
+  if (!menu.value) return
+  const path = menu.value.path
+  close()
+  insertAtCursor(`{{run, ${scriptLinkText(path)}, ${scriptButtonLabel(path)}}}`)
+}
+
 function remove() {
   if (!menu.value) return
   const { kind, path, id } = menu.value
@@ -178,6 +201,7 @@ function rename() {
     class="context-menu"
     :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
     @click.stop
+    @mousedown.prevent
     @contextmenu.prevent.stop
   >
     <template v-if="menu.kind === 'note'">
@@ -200,13 +224,27 @@ function rename() {
           <button v-for="folder in folderOptions" :key="folder" class="context-item" @click="moveTo(folder)">{{ folder }}</button>
         </div>
       </div>
+      <div class="context-separator" />
+      <div class="menu-group-label">Insert at cursor</div>
+      <button class="context-item" :disabled="!menu.canInsert" @click="insertLink">Link</button>
     </template>
-    <template v-else-if="menu.kind === 'image' || menu.kind === 'pdf' || menu.kind === 'script'">
+    <template v-else-if="menu.kind === 'image' || menu.kind === 'pdf'">
       <button class="context-item" @click="openNote">Open</button>
       <button class="context-item" @click="openBeside('right')">Open to the right</button>
       <button class="context-item" @click="openBeside('bottom')">Open below</button>
       <div class="context-separator" />
       <button class="context-item" @click="rename">Rename</button>
+    </template>
+    <template v-else-if="menu.kind === 'script'">
+      <button class="context-item" @click="openNote">Open</button>
+      <button class="context-item" @click="openBeside('right')">Open to the right</button>
+      <button class="context-item" @click="openBeside('bottom')">Open below</button>
+      <div class="context-separator" />
+      <button class="context-item" @click="rename">Rename</button>
+      <div class="context-separator" />
+      <div class="menu-group-label">Insert at cursor</div>
+      <button class="context-item" :disabled="!menu.canInsert" @click="insertLink">Link</button>
+      <button class="context-item" :disabled="!menu.canInsert" @click="insertRunButton">Button</button>
     </template>
     <template v-else-if="menu.kind === 'bookmark-folder'">
       <button class="context-item" @click="rename">Rename</button>

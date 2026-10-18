@@ -22,6 +22,7 @@ import {
   checkFolder,
   checkNoteNameFormat,
   checkSeconds,
+  checkTemplateName,
   checkWholeNumber,
   folderOrDefault,
   formatDate,
@@ -123,8 +124,18 @@ function folderShown(value: string | undefined, fallback: string) {
 
 const dailyFolder = computed(() => folderShown(config.value.dailyNoteFolder, DEFAULT_DAILY_FOLDER))
 const dailyFormat = computed(() => config.value.dailyNoteFormat ?? DEFAULT_DAILY_FORMAT)
+const dailyTemplateEnabled = computed({
+  get: () => !!config.value.dailyTemplateEnabled,
+  set: (value: boolean) => change({ dailyTemplateEnabled: value }),
+})
+const dailyTemplate = computed(() => config.value.dailyTemplate ?? '')
 const weeklyFolder = computed(() => folderShown(config.value.weeklyNoteFolder, DEFAULT_WEEKLY_FOLDER))
 const weeklyFormat = computed(() => config.value.weeklyNoteFormat ?? DEFAULT_WEEKLY_FORMAT)
+const weeklyTemplateEnabled = computed({
+  get: () => !!config.value.weeklyTemplateEnabled,
+  set: (value: boolean) => change({ weeklyTemplateEnabled: value }),
+})
+const weeklyTemplate = computed(() => config.value.weeklyTemplate ?? '')
 const attachmentsFolder = computed(() => folderShown(config.value.attachmentsFolder, DEFAULT_ATTACHMENTS_FOLDER))
 const autosaveSeconds = computed(() => String((config.value.autosaveDelayMs ?? DEFAULT_AUTOSAVE_MS) / 1000))
 const stalenessSeconds = computed(() => String(config.value.stalenessCheckSeconds ?? DEFAULT_STALENESS_CHECK_SECONDS))
@@ -324,6 +335,22 @@ const checkStaleness = (value: string) => checkSeconds(value, STALENESS_SECONDS_
             Today: {{ formatDate(dailyFormat) }}. Use yyyy, MM, dd (also yy, MMMM, MMM, M, dddd, ddd, d);
             text in [brackets] is kept as written. Use / for the top level of the notebook.
           </p>
+          <label class="setting-check check-gap">
+            <input v-model="dailyTemplateEnabled" type="checkbox" class="checkbox" />
+            Start from a template
+          </label>
+          <template v-if="dailyTemplateEnabled">
+            <label class="setting-label sub-label">Template note</label>
+            <SettingField
+              :model-value="dailyTemplate"
+              :validate="checkTemplateName"
+              :can-reset="!!dailyTemplate"
+              placeholder="Daily Template"
+              @commit="change({ dailyTemplate: $event })"
+              @reset="change({ dailyTemplate: undefined })"
+            />
+            <p class="setting-hint">A new daily note starts as a copy of this note's content (not its name).</p>
+          </template>
         </div>
 
         <div class="setting">
@@ -347,6 +374,22 @@ const checkStaleness = (value: string) => checkSeconds(value, STALENESS_SECONDS_
             This week: {{ formatDate(weeklyFormat, new Date(), true) }}. Like the daily name, plus WW or W for the
             ISO week number (yyyy is that week's year).
           </p>
+          <label class="setting-check check-gap">
+            <input v-model="weeklyTemplateEnabled" type="checkbox" class="checkbox" />
+            Start from a template
+          </label>
+          <template v-if="weeklyTemplateEnabled">
+            <label class="setting-label sub-label">Template note</label>
+            <SettingField
+              :model-value="weeklyTemplate"
+              :validate="checkTemplateName"
+              :can-reset="!!weeklyTemplate"
+              placeholder="Weekly Template"
+              @commit="change({ weeklyTemplate: $event })"
+              @reset="change({ weeklyTemplate: undefined })"
+            />
+            <p class="setting-hint">A new weekly note starts as a copy of this note's content (not its name).</p>
+          </template>
         </div>
 
         <div class="setting">

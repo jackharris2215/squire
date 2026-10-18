@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { isImagePath, isPdfPath, selectFile } from './store'
+import { isImagePath, isPdfPath, isScriptPath, selectFile } from './store'
 import { findNotes, folderOf } from './noteSearch'
 import { switcherOpen } from './overlay'
 import FileIcon from './FileIcon.vue'
@@ -91,7 +91,7 @@ async function scrollToSelected() {
           @mousemove="selected = i"
           @click="openNote(entry.path)"
         >
-          <FileIcon :kind="isPdfPath(entry.path) ? 'pdf' : isImagePath(entry.path) ? 'image' : 'note'" />
+          <FileIcon :kind="isPdfPath(entry.path) ? 'pdf' : isImagePath(entry.path) ? 'image' : isScriptPath(entry.path) ? 'script' : 'note'" />
           <span class="switcher-title">{{ entry.title }}</span>
           <span v-if="folderOf(entry.path)" class="switcher-folder">{{ folderOf(entry.path) }}</span>
         </li>

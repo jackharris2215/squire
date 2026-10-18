@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { allBlocks, imageIndex, nameFromPath, noteCache, noteIndex, selectFile, selectedFile } from './store'
+import { allBlocks, imageIndex, nameFromPath, noteCache, noteIndex, scriptIndex, selectFile, selectedFile } from './store'
 
-// The right panel's Links tab: every note or image the focused note links to with
-// [[...]] or embeds with ![[...]], in the order they first appear, deduplicated by
+// The right panel's Links tab: every note, image or script the focused note links to
+// with [[...]] or embeds with ![[...]], in the order they first appear, deduplicated by
 // path. A link that doesn't resolve to a file is still listed (greyed out, like a
 // missing link renders inline) so a broken one is easy to spot, but isn't clickable.
 const note = computed(() => (selectedFile.value ? (noteCache.get(selectedFile.value) ?? null) : null))
@@ -30,7 +30,7 @@ const links = computed(() => {
       const key = title.trim().toLowerCase()
       if (seen.has(key)) continue
       seen.add(key)
-      const path = noteIndex.value[title] ?? imageIndex.value[title] ?? null
+      const path = noteIndex.value[title] ?? imageIndex.value[title] ?? scriptIndex.value[title] ?? null
       entries.push({ title, path })
     }
   }

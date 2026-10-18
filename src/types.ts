@@ -78,8 +78,12 @@ export interface Config {
   // relative path, '' for the top level.
   dailyNoteFolder?: string
   dailyNoteFormat?: string // e.g. yyyy-MM-dd
+  dailyTemplateEnabled?: boolean // a new daily note starts as a copy of dailyTemplate's content
+  dailyTemplate?: string // the template note's name (title, not path)
   weeklyNoteFolder?: string
   weeklyNoteFormat?: string // e.g. yyyy-[W]WW
+  weeklyTemplateEnabled?: boolean
+  weeklyTemplate?: string
   attachmentsFolder?: string // where pasted images are saved
   autosaveDelayMs?: number // how long after the last edit a note is saved
   stalenessCheckSeconds?: number // how often the server is asked whether the notebook changed

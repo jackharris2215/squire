@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { folderOf } from './noteSearch'
-import { isImagePath, isPdfPath } from './store'
+import { isImagePath, isPdfPath, isScriptPath } from './store'
 import FileIcon from './FileIcon.vue'
 
 // The autocomplete list shown at the cursor after typing [[. It only displays; the
@@ -43,7 +43,7 @@ watch(
       @mousemove="emit('hover', i)"
       @click="emit('pick', entry)"
     >
-      <FileIcon :kind="isPdfPath(entry.path) ? 'pdf' : isImagePath(entry.path) ? 'image' : 'note'" />
+      <FileIcon :kind="isPdfPath(entry.path) ? 'pdf' : isImagePath(entry.path) ? 'image' : isScriptPath(entry.path) ? 'script' : 'note'" />
       <span class="suggest-title">{{ entry.title }}</span>
       <span v-if="folderOf(entry.path)" class="suggest-folder">{{ folderOf(entry.path) }}</span>
     </li>

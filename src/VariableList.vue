@@ -50,7 +50,6 @@ function displayValue(variable: Variable): string {
         v-for="(variable, i) in variables"
         :key="i"
         class="variable variable-global"
-        @mousedown.right.prevent
         @contextmenu.prevent.stop="emit('menu', $event, i, variable)"
       >
         <div class="global-top">
@@ -67,7 +66,6 @@ function displayValue(variable: Variable): string {
         class="variable variable-stacked"
         :class="{ invalid: problems[i] }"
         :title="problems[i] ?? undefined"
-        @mousedown.right.prevent
         @contextmenu.prevent.stop="emit('menu', $event, i, variable)"
       >
         <div class="global-top">
