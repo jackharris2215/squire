@@ -33,6 +33,7 @@ import {
   fetchScriptSchedule,
   findAnyBlock,
   findBlockPosition as findPosition,
+  imageIndex,
   imageLinkText,
   isBookmarked,
   isImagePath,
@@ -283,6 +284,45 @@ const notePosition = computed<(typeof ALIGNS)[number]['value']>(
 function setNotePosition(position: (typeof ALIGNS)[number]['value']) {
   if (note.value) note.value.metadata.position = position
 }
+
+// The note's banner: an image shown full-width above the title, named by its filename or
+// path the same way a [[link]] or {{run}} script is (imageIndex). Typed text that doesn't
+// resolve to an image just means no banner, same as a missing link, rather than an error.
+const bannerInput = computed({
+  get: () => (note.value?.metadata.banner as string | undefined) ?? '',
+  set: (value: string) => {
+    if (note.value) note.value.metadata.banner = value
+  },
+})
+
+const bannerPath = computed(() => imageIndex.value[bannerInput.value.trim()] ?? null)
+
+const bannerSrc = computed(() => (bannerPath.value ? `${SERVER_URL}/file?path=${encodeURIComponent(bannerPath.value)}` : null))
+
+const BANNER_HEIGHTS = [
+  { value: 'small', label: 'S', title: 'Small' },
+  { value: 'medium', label: 'M', title: 'Medium' },
+  { value: 'large', label: 'L', title: 'Large' },
+] as const
+
+const bannerHeight = computed(() => (note.value?.metadata.bannerHeight as (typeof BANNER_HEIGHTS)[number]['value'] | undefined) ?? 'medium')
+
+function setBannerHeight(height: (typeof BANNER_HEIGHTS)[number]['value']) {
+  if (note.value) note.value.metadata.bannerHeight = height
+}
+
+// How far up/down the image sits within the banner (0 = top, 100 = bottom, 50 is centered
+// and isn't written). Drives the image's object-position so a tall image can be framed.
+const BANNER_POSITION_DEFAULT = 50
+
+const bannerPosition = computed({
+  get: () => (note.value?.metadata.bannerPosition as number | undefined) ?? BANNER_POSITION_DEFAULT,
+  set: (value: number) => {
+    if (!note.value) return
+    if (value === BANNER_POSITION_DEFAULT) delete note.value.metadata.bannerPosition
+    else note.value.metadata.bannerPosition = value
+  },
+})
 
 const bookmarked = computed({
   get: () => !!props.path && isBookmarked(props.path),
@@ -1605,6 +1645,46 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="context-separator" />
+          <div class="settings-group">
+            <label class="settings-label">Banner</label>
+            <input
+              type="text"
+              class="banner-input"
+              placeholder="Image name"
+              v-model="bannerInput"
+            />
+          </div>
+          <template v-if="bannerPath">
+            <div class="settings-group">
+              <label class="settings-label">Banner position</label>
+              <input
+                type="range"
+                class="banner-position-slider"
+                min="0"
+                max="100"
+                step="1"
+                :value="bannerPosition"
+                @input="bannerPosition = Number(($event.target as HTMLInputElement).value)"
+              />
+            </div>
+            <div class="settings-group">
+              <label class="settings-label">Banner height</label>
+              <div class="segmented">
+                <button
+                  v-for="h in BANNER_HEIGHTS"
+                  :key="h.value"
+                  class="segment"
+                  :class="{ active: bannerHeight === h.value }"
+                  :title="h.title"
+                  :aria-label="`${h.title} banner height`"
+                  @click="setBannerHeight(h.value)"
+                >
+                  {{ h.label }}
+                </button>
+              </div>
+            </div>
+          </template>
+          <div class="context-separator" />
           <button class="context-item" @click="locateInBrowser">Locate in browser</button>
           <button class="context-item" @click="startTitleRename">Rename</button>
           <button class="settings-delete" @click="deleteNote(props.path)">Delete Note</button>
@@ -1800,6 +1880,14 @@ onUnmounted(() => {
         :style="{ '--note-font-scale': fontSize / 100 }"
       >
         <template v-if="note">
+          <img
+            v-if="bannerSrc"
+            :src="bannerSrc"
+            class="note-banner"
+            :class="`height-${bannerHeight}`"
+            :style="{ objectPosition: `50% ${bannerPosition}%` }"
+            alt=""
+          />
           <h1 v-if="showTitle" class="note-title">{{ currentTitle }}</h1>
           <div ref="blocksContainerRef" class="blocks-container" :class="{ dragging: draggedBlockId, 'ctrl-mode': ctrlHeld }">
             <template v-for="(row, rowIndex) in note.blocks" :key="row[0]!.id">
@@ -2104,6 +2192,27 @@ onUnmounted(() => {
 .font-size-row .icon-button:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.banner-input {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-text-strong);
+  background: rgb(var(--tint) / 0.08);
+  border: 1px solid rgb(var(--tint) / 0.15);
+  border-radius: 4px;
+  outline: none;
+}
+
+.banner-input:focus {
+  border-color: var(--color-accent);
+}
+
+.banner-position-slider {
+  width: 100%;
+  accent-color: var(--color-accent);
 }
 
 /* The header's title turned into the rename box. */
@@ -2523,6 +2632,26 @@ onUnmounted(() => {
   margin-bottom: 1.5rem;
   padding-left: 1rem;
   color: var(--color-heading);
+}
+
+.note-banner {
+  width: 100%;
+  margin-bottom: 1.5rem;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.note-banner.height-small {
+  height: 120px;
+}
+
+.note-banner.height-medium {
+  height: 220px;
+}
+
+.note-banner.height-large {
+  height: 360px;
 }
 
 .block {

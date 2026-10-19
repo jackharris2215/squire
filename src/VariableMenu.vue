@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Variable } from './types'
 import { WIDGETS, widgetAccepts, widgetSnippet } from './variables'
+import { copyText } from './clipboard'
 
 // The right-click menu on a variable row: copy its name or value, insert it into the
 // block being edited (as a display or a widget), switch its type, or delete it. The parent
@@ -52,7 +53,7 @@ defineExpose({ open, close })
 
 function copy(text: string) {
   close()
-  navigator.clipboard.writeText(text)
+  copyText(text)
 }
 
 function insert(kind: string | null) {

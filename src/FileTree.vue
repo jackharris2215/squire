@@ -77,10 +77,15 @@ const renameDraft = ref('')
 const renameError = ref<string | null>(null)
 let renameBusy = false
 
+// v-model fills the box in after this runs (directives run in template order and Firefox
+// drops the selection when the value is set), so the selecting waits for the next tick.
 const vRenameFocus = {
   mounted(el: HTMLInputElement) {
     el.focus()
-    el.select()
+    nextTick(() => {
+      el.focus()
+      el.select()
+    })
   },
 }
 

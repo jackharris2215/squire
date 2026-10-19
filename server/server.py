@@ -82,9 +82,13 @@ routes above. It needs a token sent as "Authorization: Bearer <token>": SQUIRE_A
   PUT /api/note?path=        -> write a whole note (creates it if missing); body is note JSON
                                 {"metadata", "blocks"}. Needs the read-write token. An optional
                                 &lastSaved= refuses (412) if the notebook changed since then.
-  PUT /api/script?path=      -> write a script (path ends in .py), creating it if missing or
-                                replacing its text if it exists; body is the script's source as
-                                plain text. Needs the read-write token. An optional &lastSaved=
+  GET /api/script?path=      -> a script's source as plain text (path ends in .py). 404 if missing.
+  PUT /api/script?path=      -> write a script (path ends in .py); body is the script's source as
+                                plain text. If a script with this exact path already exists,
+                                its code is replaced; if not but one with this filename exists
+                                somewhere else in the notebook (it was moved into a folder, say),
+                                that one is updated instead; otherwise a new file is created at
+                                this path. Needs the read-write token. An optional &lastSaved=
                                 refuses (412) if the notebook changed since then.
   GET /api/variable?name=[&path=]    -> {"name", "type", "value"} of one variable: a note's
                                 (give &path=) or the notebook's (leave &path= out). 404 if not
@@ -354,6 +358,19 @@ def put_script(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return {}
+
+
+def find_script_by_name(name):
+    """An existing script anywhere in the notebook with this filename (case-insensitive), or
+    None. A script's name has no uniqueness check of its own (see scriptIndex in store.ts), so
+    without this a caller that only knows a script's name (not that it has since been moved into
+    a folder) would create a second file with the same name rather than updating the one that's
+    already there — which is exactly what the outside API's script write uses this for."""
+    lower = name.lower()
+    for p in notebook_items():
+        if p.is_file() and p.suffix.lower() == SCRIPT_EXT and p.name.lower() == lower:
+            return p
+    return None
 
 
 SCRIPT_TIMEOUT_SECONDS = 60
@@ -1131,6 +1148,11 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 variables = read_config().get("variables") or []
             self._send_json(api_get_variable(variables, name))
+        elif route == "/api/script":
+            path = notebook_path(params.get("path"))
+            if not path.is_file():
+                raise HttpError(404, "File not found")
+            self._send(read_script(path), "text/plain; charset=utf-8", 200)
         elif route.startswith("/api/"):
             raise HttpError(404, "Not found")
         elif route == "/files":
@@ -1247,6 +1269,12 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/script":
             self._need_write_token()
             path = notebook_path(params.get("path"))
+            if not path.exists():
+                # The caller gave a path, but a script is really identified by its filename
+                # (see find_script_by_name): if one by this name already exists somewhere else
+                # in the notebook (it was moved into a folder after the caller last saw it, say),
+                # write there instead of creating a second file with the same name.
+                path = find_script_by_name(path.name) or path
             text = self._body()
             self._write(params, lambda: put_script(path, text), check="lastSaved" in params, notes=[rel(path)], tree=not path.exists())
             return

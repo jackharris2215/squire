@@ -1,7 +1,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { SERVER_URL, lastSaved, serverWrite, whenWritesDone } from './api'
 import { askConfirm } from './dialog'
-import { settingsOpen } from './overlay'
+import { renaming, settingsOpen } from './overlay'
 import { closeDrawer, isMobile, toggleDrawer } from './mobile'
 import { randomUUID } from './uuid'
 import {
@@ -806,9 +806,12 @@ export function sanitizeName(name: string): string {
 // if it is — the same thing a human would do, and cheap since the full file list
 // is already cached.
 function freeName(name: string, prefix: string): string {
-  if (!files.value.includes(`${prefix}${name}.json`)) return name
+  // Note names are unique across the whole notebook, not just the folder, so a title taken in
+  // any folder counts as taken (the path check still covers non-note files like images).
+  const taken = (n: string) => n in noteIndex.value || files.value.includes(`${prefix}${n}.json`)
+  if (!taken(name)) return name
   let n = 1
-  while (files.value.includes(`${prefix}${name} (${n}).json`)) n++
+  while (taken(`${name} (${n})`)) n++
   return `${name} (${n})`
 }
 
@@ -822,7 +825,7 @@ export async function createNote(
   blocks: Block[][] = [],
   metadata: Note['metadata'] = {},
   floating?: Note['floating'],
-) {
+): Promise<string | undefined> {
   const prefix = folder ? `${folder}/` : ''
   const name = freeName(title, prefix)
   const filename = `${prefix}${name}.json`
@@ -833,13 +836,19 @@ export async function createNote(
     method: 'PUT',
     body: JSON.stringify(newNote, null, 2),
   })
-  if (!ok) return
+  if (!ok) return undefined
   files.value.push(filename)
   noteCache.set(filename, newNote)
   noteList.value.push({ title: name, path: filename })
   noteIndex.value[name] = filename
   if (folder) collapsedFolders.value.delete(folder) // make sure the new note is visible
   selectFile(filename)
+  return filename
+}
+
+// Starts renaming a note's row in the sidebar right away (FileTree.vue selects the name).
+export function startRenaming(path: string | undefined) {
+  if (path) renaming.value = { kind: 'note', path }
 }
 
 // A template's content (by title, like a [[link]]), for openDailyNote/openWeeklyNote below.
@@ -887,8 +896,11 @@ export async function openWeeklyNote() {
 
 // `todayDate` ("YYYY-MM-DD"), only set for a daily note, adds its "Today" variable.
 async function openDatedNote(folder: string, title: string, templateTitle: string | null, todayDate: string | null = null) {
-  const path = `${folder ? `${folder}/` : ''}${title}.json`
-  if (files.value.includes(path)) return selectFile(path)
+  // Names are unique across the whole notebook, so a note with this title anywhere (the
+  // daily/weekly folder is only where a new one starts, notes can be moved out of it) is
+  // the one to open.
+  const existing = noteIndex.value[title]
+  if (existing) return selectFile(existing)
   if (folder && !folders.value.includes(folder)) folders.value.push(folder)
   const content = templateTitle ? await templateContent(templateTitle) : null
   const metadata = todayDate ? withTodayVariable(content?.metadata ?? {}, todayDate) : content?.metadata ?? {}
@@ -896,10 +908,10 @@ async function openDatedNote(folder: string, title: string, templateTitle: strin
 }
 
 // A new note goes in the folder from the settings (the top level unless set).
-export function createNewNote() {
+export async function createNewNote() {
   const folder = config.value.newNoteFolder ?? ''
   if (folder && !folders.value.includes(folder)) folders.value.push(folder)
-  createNote(nextNewNoteTitle(), folder)
+  startRenaming(await createNote(nextNewNoteTitle(), folder))
 }
 
 export async function copyNote(path: string) {

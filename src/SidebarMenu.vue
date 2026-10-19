@@ -3,8 +3,10 @@ import { computed, nextTick, ref } from 'vue'
 import type { BookmarkFolder, SidebarRow } from './types'
 import { renaming } from './overlay'
 import { canInsertAtCursor, insertAtCursor } from './insert'
+import { copyText } from './clipboard'
 import {
   allFolderPaths,
+  baseName,
   copyNote,
   createFolder,
   createNote,
@@ -17,6 +19,7 @@ import {
   nameFromPath,
   openInSplit,
   nextNewNoteTitle,
+  startRenaming,
   scriptButtonLabel,
   scriptLinkText,
   selectFile,
@@ -67,11 +70,11 @@ function close() {
 
 defineExpose({ open, openBookmarkFolder, close })
 
-function newNote() {
+async function newNote() {
   if (!menu.value) return
   const folder = menu.value.path
   close()
-  createNote(nextNewNoteTitle(), folder)
+  startRenaming(await createNote(nextNewNoteTitle(), folder))
 }
 
 function newScript() {
@@ -184,6 +187,16 @@ function remove() {
   else deleteNote(path)
 }
 
+// A note's name has no extension (it's never shown with ".json"); an image, PDF or
+// script's does, same as its row in the tree.
+function copyName() {
+  if (!menu.value) return
+  const { kind, path } = menu.value
+  const name = kind === 'note' ? nameFromPath(path) : baseName(path)
+  close()
+  copyText(name)
+}
+
 // Closes the menu and turns the row's name into an input (FileTree.vue/BookmarkList.vue
 // do the rest).
 function rename() {
@@ -211,6 +224,7 @@ function rename() {
       <div class="context-separator" />
       <button class="context-item" @click="bookmark">{{ menuIsBookmarked ? 'Remove bookmark' : 'Bookmark' }}</button>
       <button class="context-item" @click="copy">Make a copy</button>
+      <button class="context-item" @click="copyName">Copy name</button>
       <button class="context-item" @click="rename">Rename</button>
       <div ref="moveToWrapper" class="context-item-parent" @mouseenter="openSubmenu" @mouseleave="closeSubmenu">
         <button class="context-item submenu-trigger">
@@ -233,6 +247,7 @@ function rename() {
       <button class="context-item" @click="openBeside('right')">Open to the right</button>
       <button class="context-item" @click="openBeside('bottom')">Open below</button>
       <div class="context-separator" />
+      <button class="context-item" @click="copyName">Copy name</button>
       <button class="context-item" @click="rename">Rename</button>
     </template>
     <template v-else-if="menu.kind === 'script'">
@@ -240,6 +255,7 @@ function rename() {
       <button class="context-item" @click="openBeside('right')">Open to the right</button>
       <button class="context-item" @click="openBeside('bottom')">Open below</button>
       <div class="context-separator" />
+      <button class="context-item" @click="copyName">Copy name</button>
       <button class="context-item" @click="rename">Rename</button>
       <div class="context-separator" />
       <div class="menu-group-label">Insert at cursor</div>

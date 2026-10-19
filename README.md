@@ -111,6 +111,9 @@ POST /api/move?path=&to=    move a note, image, PDF or folder into folder `to` (
 GET /api/variable?name=&path=    read a variable (notebook-wide if path is omitted)
 PUT /api/variable?name=&path=    create or update a variable; body {"type", "value"}
 DELETE /api/variable?name=&path= delete a variable
+GET /api/script?path=       a script's source as plain text
+PUT /api/script?path=       create or overwrite a script's source (read-write token); body
+                            is plain text
 ```
 
 An optional `&lastSaved=` on a write refuses it (412) if the notebook changed since you read it.
