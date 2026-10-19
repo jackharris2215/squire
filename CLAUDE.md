@@ -206,6 +206,28 @@ Backend: `server/server.py`, one file, standard library only. The notebook is th
   reads `demo` from `/server-info` (`checkDemo()`) and shows a banner. The sample notebook is
   `demo-notebook/` and `docker-compose.demo.yml` runs it (project name `squire-demo`, so it never
   touches the normal container).
+- **Every server or app change must be checked against demo mode.** The public demo
+  (demo.squirenotes.com) runs the same code with `SQUIRE_DEMO=1` and strangers can use it, so
+  before finishing any change that touches `server/server.py`, the `squire` library or how the
+  app saves, check each of these:
+  1. *A new function or route that changes the notebook, config or any file* needs a `demo_*`
+     version rebound in `enable_demo_mode()` (or must go through `_write`, which skips saving in
+     demo mode). Routes that write outside `_write`, like `PUT /config` and the `/api/variable`
+     routes, need their own `if DEMO` check. Without it the demo would really write.
+  2. *Nothing may let a visitor run code they wrote.* Scripts can only be run, never created or
+     changed (`put_script`, `put_script_schedule` and `/image` refuse in demo mode). Never add a
+     route that runs code from a request body, and keep `/run` going through
+     `run_script_in_sandbox()`.
+  3. *The sandbox is the same `server.py`*, started with `--notebook`/`--port`/`SQUIRE_SANDBOX=1`,
+     so changing startup, flags, environment variables or `run_script()` needs a test with a demo
+     script run. The `changes` in the `/run` reply (and `showScriptChanges()` in `store.ts`) only
+     cover notes, deleted notes and folders; extend both if scripts gain other visible effects.
+  4. *Keep the demo responses shaped like the real ones* (`path`, `updated`, `lastSaved`), since
+     the app uses them after every change.
+  5. *Test it:* start `SQUIRE_DEMO=1 PORT=<spare> NOTEBOOK_DIR=<copy of demo-notebook> python3
+     server/server.py`, try the changed route, and confirm the files on disk are untouched.
+  6. *Deploy:* the live app and the demo are built from the same checkout, so both containers
+     need rebuilding (`docker compose -f docker-compose.demo.yml ...` for the demo; always pass `-f`).
 
 ## Testing policy — read this before touching anything
 

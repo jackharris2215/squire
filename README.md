@@ -46,12 +46,26 @@ After a build the server also serves the app itself, so `http://localhost:8765` 
 
 ## Docker
 
-Create a `docker-compose.yml` next to the `Dockerfile`:
+A ready-made image is published for amd64 and arm64 (PCs, Raspberry Pis, Apple Silicon), so
+there is nothing to build:
+
+```sh
+docker run -d --name squire -p 8765:8765 \
+  -e SQUIRE_PASSWORD=changeme \
+  -v "$(pwd)/notebook:/data/notebook" \
+  ghcr.io/jackharris2215/squire:latest
+```
+
+then open http://localhost:8765. Set a password: without `SQUIRE_PASSWORD` anyone who can reach
+the port can read and change every note, so don't expose it to the internet either way. Use a
+version tag such as `:1.0.0` instead of `:latest` to stay on one release.
+
+Or with Docker Compose, in a `docker-compose.yml`:
 
 ```yaml
 services:
   squire:
-    build: .
+    image: ghcr.io/jackharris2215/squire:latest   # or "build: ." to build from this folder
     restart: unless-stopped
     ports:
       - "8765:8765"            # use "127.0.0.1:8765:8765" to keep it to this machine
@@ -67,10 +81,12 @@ services:
 Then:
 
 ```sh
-docker compose up -d --build   # then open http://localhost:8765
+docker compose up -d           # then open http://localhost:8765 (add --build if you use "build: .")
+docker compose pull && docker compose up -d   # later, to update to the newest image
 ```
 
-The image builds the app and runs the server, which serves both. Your notebook is the
+The image contains the app and the server, which serves both. Updating never touches your notes,
+which live in the mounted folder. Your notebook is the
 `./notebook` folder on the host, mounted at `/data/notebook` (notes, trash and settings all live
 there).
 
