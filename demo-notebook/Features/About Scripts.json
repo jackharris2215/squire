@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "created": "2026-10-01",
+    "modified": "2026-10-01"
+  },
+  "blocks": [
+    [
+      {
+        "id": "block-demo-034",
+        "type": "text",
+        "content": "Scripts are `.py` files in the notebook. They run on the server with a `squire` library that can read and edit your notes."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-035",
+        "type": "text",
+        "content": "{{run, Add a Note}}   [[Add a Note.py]]"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-036",
+        "type": "text",
+        "content": "The button above runs a script that creates a note and adds to it. Click any script link to read the code and run it from there (Ctrl+Enter also runs it)."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-037",
+        "type": "text",
+        "content": "- [[Hello Notebook.py]]: lists the notes in the notebook\n- [[squire_example.py]]: every function in the library, from reading notes to creating, moving and deleting them; the calls that change the notebook are written as comments"
+      }
+    ]
+  ]
+}

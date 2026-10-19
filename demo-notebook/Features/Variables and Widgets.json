@@ -1,0 +1,112 @@
+{
+  "metadata": {
+    "created": "2026-10-01",
+    "modified": "2026-10-01",
+    "variables": [
+      {
+        "name": "tasks done",
+        "type": "number",
+        "value": 3
+      },
+      {
+        "name": "total tasks",
+        "type": "number",
+        "value": 8
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "value": "Alex"
+      },
+      {
+        "name": "urgent",
+        "type": "boolean",
+        "value": false
+      },
+      {
+        "name": "water",
+        "type": "number",
+        "value": 3
+      }
+    ]
+  },
+  "blocks": [
+    [
+      {
+        "id": "block-demo-020",
+        "type": "text",
+        "content": "Variables live in the note (or the whole notebook) and show up with `{{name}}`. Formulas work too."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-021",
+        "type": "text",
+        "content": "## Progress"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-022",
+        "type": "text",
+        "content": "Done: {{tasks done}} of {{total tasks}}  ({{tasks done / total tasks * 100}}%)"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-023",
+        "type": "text",
+        "content": "Adjust: {{counter, tasks done}}   Or slide it: {{slider, tasks done, total tasks, 1}}"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-024",
+        "type": "text",
+        "content": "{{if, tasks done >= total tasks, \"All done!\", \"Keep going.\"}}"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-025",
+        "type": "text",
+        "content": "## Other widgets"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-026",
+        "type": "text",
+        "content": "Name: {{input, name}}"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-027",
+        "type": "text",
+        "content": "Urgent: {{checkbox, urgent}}"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-028",
+        "type": "text",
+        "content": "Glasses of water: {{checkboxes, water, 8}}"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-029",
+        "type": "text",
+        "content": "Hello, {{name}}. Today is {{Date}}."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-030",
+        "type": "text",
+        "content": "See the variables panel (bottom of the sidebar) to add, edit and retype variables."
+      }
+    ]
+  ]
+}

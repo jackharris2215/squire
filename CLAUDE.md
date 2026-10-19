@@ -192,6 +192,20 @@ Backend: `server/server.py`, one file, standard library only. The notebook is th
   `breakUndoStep()` first so it is its own step.
 - Server errors come back as `{"error": ...}`; successful changes return the new
   `lastSaved`.
+- **Demo mode (`SQUIRE_DEMO=1` / `--demo`).** A public try-it-out copy: nothing is written, there is
+  no login and `/api/` is 403. `enable_demo_mode()` in `server.py` rebinds the functions that change
+  the notebook (`put_note`, `rename_file`, `move_item`, ...) to `demo_*` versions that return what the
+  real ones would without touching disk, so a new function that writes to the notebook needs a demo
+  version there too (and `_write` skips `touch_last_saved()`/`broadcast()` in demo mode). `PUT /config`
+  is accepted and dropped. Scripts can only be run, never changed (`put_script` refuses, and
+  `ScriptEditor.vue`/`editScript` are read-only via `demoMode` in `api.ts`); `/run` goes through
+  `run_script_in_sandbox()`, which copies the notebook to a temp folder and runs a second, private
+  server (`SQUIRE_SANDBOX=1`, no schedules) on a free loopback port for the script to talk to; the notes it
+  created, changed or deleted come back as `changes` in the `/run` reply and `showScriptChanges()` (`store.ts`)
+  shows them (never saved, so a reload undoes them). The app
+  reads `demo` from `/server-info` (`checkDemo()`) and shows a banner. The sample notebook is
+  `demo-notebook/` and `docker-compose.demo.yml` runs it (project name `squire-demo`, so it never
+  touches the normal container).
 
 ## Testing policy — read this before touching anything
 

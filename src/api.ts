@@ -12,6 +12,17 @@ export const lastSaved = ref(0)
 export const outOfDate = ref<number | null>(null)
 // True when the server wants a password (it answered 401): LoginScreen.vue is shown.
 export const needsLogin = ref(false)
+// True when the server is a demo (nothing is saved, a reload resets everything): the app says so.
+export const demoMode = ref(false)
+
+export async function checkDemo() {
+  try {
+    const res = await fetch(`${SERVER_URL}/server-info`)
+    if (res.ok) demoMode.value = !!(await res.json()).demo
+  } catch {
+    // Not reachable: nothing says it's a demo.
+  }
+}
 
 // Whether the server will talk to us: false (and the login screen shows) if it wants a
 // password we haven't given. An unreachable server isn't a login problem, so it passes.

@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "created": "2026-10-01",
+    "modified": "2026-10-01"
+  },
+  "blocks": [
+    [
+      {
+        "id": "block-demo-001",
+        "type": "text",
+        "content": "# Welcome to Squire"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-002",
+        "type": "text",
+        "content": "Squire is a personal note-taking app built from Notion-style blocks. Poke around, edit anything, and see how it works."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-003",
+        "type": "text",
+        "content": "## Where to look"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-004",
+        "type": "text",
+        "content": "- [[Blocks and Formatting]]: text, tables, checklists, columns\n- [[Variables and Widgets]]: variables, formulas, and interactive widgets\n- [[Linking Notes]]: links between notes\n- [[About Scripts]]: Python that reads and edits the notebook"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-005",
+        "type": "text",
+        "content": "## Try this"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-006",
+        "type": "text",
+        "content": "- [ ] Click into a block and type\n- [ ] Right-click a note in the sidebar\n- [ ] Press **Ctrl+P** and jump to a note by name\n- [ ] Click the calendar button on the far left for a daily note"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-007",
+        "type": "text",
+        "content": "Notes are plain JSON files, one per note, kept in a single notebook folder."
+      }
+    ]
+  ]
+}

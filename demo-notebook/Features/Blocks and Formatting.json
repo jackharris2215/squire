@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "created": "2026-10-01",
+    "modified": "2026-10-01"
+  },
+  "blocks": [
+    [
+      {
+        "id": "block-demo-008",
+        "type": "text",
+        "content": "Every note is a stack of **blocks**. A block is written in markdown while you edit it and drawn nicely when you leave it: *italic*, **bold**, `code`, ~~strikethrough~~."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-009",
+        "type": "text",
+        "content": "## A table"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-010",
+        "type": "text",
+        "content": "| Item | Qty | Notes |\n| --- | --- | --- |\n| Apples | 6 | |\n| Milk | 1 | 2% |\n| Bread | 2 | whole wheat |"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-011",
+        "type": "text",
+        "content": "## A checklist"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-012",
+        "type": "text",
+        "content": "- [x] Build the thing\n- [ ] Test the thing\n- [ ] Show someone the thing"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-013",
+        "type": "text",
+        "content": "## Columns"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-014",
+        "type": "text",
+        "content": "**Left column**\n\nBlocks that share a row sit side by side. Drag the handle on a block to rearrange."
+      },
+      {
+        "id": "block-demo-015",
+        "type": "text",
+        "content": "**Right column**\n\nRight-click a block to change its alignment and colors, or to unhook it and float it anywhere on the note."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-016",
+        "type": "text",
+        "content": "## A bulleted list"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-017",
+        "type": "text",
+        "content": "- First\n- Second\n  - Nested\n- Third"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-018",
+        "type": "text",
+        "content": "## Organizing blocks"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-019",
+        "type": "text",
+        "content": "Hold **Ctrl** to enter organize mode: click blocks to select them, then drag them to rearrange, including into columns or out onto the note as floating blocks."
+      }
+    ]
+  ],
+  "floating": [
+    {
+      "id": "block-demo-float-1",
+      "type": "text",
+      "content": "**A floating block**\n\nThis one is unhooked from the flow. Drag it anywhere, resize it, or right-click it to hook it back in.",
+      "x": 400,
+      "y": 20,
+      "width": 240,
+      "z": 1
+    }
+  ]
+}

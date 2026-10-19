@@ -103,6 +103,12 @@ routes above. It needs a token sent as "Authorization: Bearer <token>": SQUIRE_A
   DELETE /api/variable?name=[&path=] -> remove a variable. Needs the read-write token; the same
                                 &lastSaved=/live-sync rules as PUT above apply.
 
+Demo mode (SQUIRE_DEMO=1 / --demo): for a public try-it-out copy. Nothing is ever written: the
+changes the app sends are accepted and forgotten, so a reload brings back the notebook as it
+was. There is no login and no /api/. Scripts can be run but not edited; each run happens on a
+throwaway copy of the notebook (in a second, private server); what a script changes is shown
+in the app (the reply to /run carries "changes") but, like everything else, never saved. /server-info reports "demo": true, which the app shows as a banner.
+
 Password: if one is set (SQUIRE_PASSWORD / --password), every API route above needs a
 login first: POST /login with {"password": ...} replies with a cookie the browser sends from
 then on (it also covers images and PDFs, which can't carry a header). The frontend files
@@ -112,7 +118,7 @@ HTTP: it keeps casual visitors out, it is not strong security.
 Settings (flag, or environment variable): --notebook / NOTEBOOK_DIR, --config / CONFIG_PATH (default: a hidden
 file in the notebook, copied from the old project-folder config.json the first time),
 --static / STATIC_DIR, --host / HOST, --port / PORT, --password / SQUIRE_PASSWORD,
---api-token / SQUIRE_API_TOKEN, --api-read-token / SQUIRE_API_READ_TOKEN.
+--api-token / SQUIRE_API_TOKEN, --api-read-token / SQUIRE_API_READ_TOKEN, --demo / SQUIRE_DEMO.
 """
 
 import argparse
@@ -158,6 +164,11 @@ HOST = os.environ.get("HOST", "0.0.0.0")  # every network interface, so other de
 PORT = int(os.environ.get("PORT", 8765))
 # A single shared password (env SQUIRE_PASSWORD or --password). Not set: no login at all.
 PASSWORD = os.environ.get("SQUIRE_PASSWORD") or None
+# Demo mode (see the docstring): nothing is saved, no login, no outside API.
+DEMO = os.environ.get("SQUIRE_DEMO", "").strip().lower() in ("1", "true", "yes", "on")
+# Set only on the private server a demo-mode script run talks to (run_script_in_sandbox): it
+# has no schedules, and takes its internal token from its parent so the parent can hand it on.
+SANDBOX = bool(os.environ.get("SQUIRE_SANDBOX"))
 COOKIE_NAME = "squire_session"
 # Tokens for the outside API under /api/ (see the docstring). Not set: that part is off.
 API_TOKEN = os.environ.get("SQUIRE_API_TOKEN") or None  # read and write
@@ -165,7 +176,7 @@ API_READ_TOKEN = os.environ.get("SQUIRE_API_READ_TOKEN") or None  # read only
 # Made fresh at every start and handed only to the scripts the server runs (as SQUIRE_API_TOKEN),
 # so they can use /api/ without the owner configuring a token. Read and write, accepted from this
 # machine only, and it works even when the API is otherwise off.
-INTERNAL_TOKEN = secrets.token_urlsafe(32)
+INTERNAL_TOKEN = os.environ.get("SQUIRE_SANDBOX_TOKEN") or secrets.token_urlsafe(32)
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
 DEFAULT_CONFIG = {
@@ -377,21 +388,26 @@ SCRIPT_TIMEOUT_SECONDS = 60
 SCRIPT_OUTPUT_LIMIT = 100_000  # characters of output kept
 
 
-def run_script(path):
+def run_script(path, notebook=None, port=None, token=None, timeout=None):
     """Run a script as its own process (so a crash or an endless loop can't take the server
     down) and return what it printed. Its code is pulled out of the JSON it's stored in and
     written to a temp file (same name, so a traceback still points somewhere sensible) since
     the file on disk isn't valid Python by itself. It starts in the notebook folder and finds
     the `squire` module next to this file; the internal token lets it use /api/ on this server.
     This is not a notebook change, and it must not hold WRITE_LOCK: the script's own writes
-    need it."""
+    need it. The notebook, port, token and time limit default to this server's own; the demo's
+    sandbox (run_script_in_sandbox) passes those of its private copy."""
     if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
         raise HttpError(400, "That is not a script")
     code = read_script(path)
+    notebook = notebook or NOTEBOOK_DIR
+    port = port or PORT
+    token = token or INTERNAL_TOKEN
+    timeout = timeout or SCRIPT_TIMEOUT_SECONDS
     env = {k: v for k, v in os.environ.items() if k not in ("SQUIRE_PASSWORD", "SQUIRE_API_READ_TOKEN")}
     env.update({
-        "SQUIRE_URL": f"http://127.0.0.1:{PORT}",
-        "SQUIRE_API_TOKEN": INTERNAL_TOKEN,
+        "SQUIRE_URL": f"http://127.0.0.1:{port}",
+        "SQUIRE_API_TOKEN": token,
         "PYTHONPATH": str(Path(__file__).resolve().parent) + os.pathsep + env.get("PYTHONPATH", ""),
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -402,8 +418,8 @@ def run_script(path):
         tmp_path.write_text(code, encoding="utf-8")
         try:
             done = subprocess.run(
-                [sys.executable, str(tmp_path)], cwd=NOTEBOOK_DIR, env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_SECONDS,
+                [sys.executable, str(tmp_path)], cwd=notebook, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
             )
             output, exit_code = done.stdout, done.returncode
         except subprocess.TimeoutExpired as err:  # the process has been killed by now
@@ -691,6 +707,180 @@ def move_item(source, dest_dir):
         raise HttpError(409, "Something with that name already exists there")
     source.rename(target)  # a folder takes its contents along
     return {"path": rel(target)}
+
+
+# --- Demo mode ---
+# enable_demo_mode() swaps the functions that change the notebook for these, which check the
+# request the way the real ones do but touch nothing and reply with what the real ones would
+# (so the app carries on as if the change had happened, until it is reloaded). They are lenient
+# about what exists: after a pretend rename the disk still has the old name, and the app's next
+# request will use the new one.
+
+
+def _demo_valid_name(name):
+    name = (name or "").strip()
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise HttpError(400, "Invalid name")
+    return name
+
+
+def demo_put_note(path, note, body):
+    return {}
+
+
+def demo_refuse_image(path, data):
+    raise HttpError(403, "Images can't be added in the demo")
+
+
+def demo_refuse_script(*args):
+    raise HttpError(403, "Scripts can't be changed in the demo")
+
+
+def demo_delete(path):
+    return {}
+
+
+def demo_rename_file(path, new_name):
+    target = path.with_name(f"{_demo_valid_name(new_name)}{path.suffix}")
+    return {"path": rel(target), "updated": []}
+
+
+def demo_make_folder(path):
+    return {"path": rel(path)}
+
+
+def demo_rename_folder(path, name):
+    return {"path": rel(path.parent / _demo_valid_name(name))}
+
+
+def demo_move_item(source, dest_dir):
+    target = dest_dir / source.name
+    if target == source:
+        return None
+    return {"path": rel(target)}
+
+
+def enable_demo_mode():
+    global put_note, put_image, put_script, put_script_schedule, delete_file, delete_folder
+    global rename_file, make_folder, rename_folder, move_item
+    put_note = demo_put_note
+    put_image = demo_refuse_image
+    put_script = demo_refuse_script
+    put_script_schedule = demo_refuse_script
+    delete_file = demo_delete
+    delete_folder = demo_delete
+    rename_file = demo_rename_file
+    make_folder = demo_make_folder
+    rename_folder = demo_rename_folder
+    move_item = demo_move_item
+
+
+# At most this many demo script runs at once (each starts a server of its own), and a shorter
+# time limit than the usual one.
+DEMO_RUN_SLOTS = threading.BoundedSemaphore(3)
+DEMO_SCRIPT_TIMEOUT_SECONDS = 20
+
+
+def _copy_notebook(source, target):
+    """Copy the notebook's folders and files (their contents only, not permissions, owners or
+    extended attributes, which a locked-down container may not allow copying) without the trash."""
+    for root, dirs, files in os.walk(source):
+        dirs[:] = [d for d in dirs if d != ".trash"]
+        here = target / Path(root).relative_to(source)
+        here.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            shutil.copyfile(Path(root) / name, here / name)
+
+
+def _sandbox_changes(original, sandbox):
+    """What a demo script changed in its throwaway copy, for the app to show (it never saves
+    them): {"notes": {path: note}, "deleted": [paths], "folders": [new folder paths]}."""
+    def notes_in(root):
+        return {
+            p.relative_to(root).as_posix(): p for p in root.rglob("*.json")
+            if p.is_file() and p.name != CONFIG_NAME and ".trash" not in p.relative_to(root).parts
+        }
+
+    def folders_in(root):
+        return {
+            p.relative_to(root).as_posix() for p in root.rglob("*")
+            if p.is_dir() and ".trash" not in p.relative_to(root).parts
+        }
+
+    before, after = notes_in(original), notes_in(sandbox)
+    notes = {}
+    for path, file in after.items():
+        if path in before and before[path].read_bytes() == file.read_bytes():
+            continue
+        try:
+            notes[path] = json.loads(file.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if len(notes) >= 100:
+            break
+    return {
+        "notes": notes,
+        "deleted": sorted(set(before) - set(after)),
+        "folders": sorted(folders_in(sandbox) - folders_in(original)),
+    }
+
+
+def run_script_in_sandbox(path):
+    """Demo mode's Run: the script runs for real, but against a throwaway copy of the notebook
+    served by a second, private server (this same file, as a normal server on a free loopback
+    port), so what it writes through `squire` is gone when it ends. The scripts that can run
+    are only the ones already in the notebook: nothing in the demo can change them."""
+    if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
+        raise HttpError(400, "That is not a script")
+    if not DEMO_RUN_SLOTS.acquire(blocking=False):
+        raise HttpError(429, "The demo is busy running other scripts; try again in a moment")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            notebook = Path(tmp_dir) / "notebook"
+            _copy_notebook(NOTEBOOK_DIR, notebook)
+            if not CONFIG_PATH.is_relative_to(NOTEBOOK_DIR) and CONFIG_PATH.is_file():
+                shutil.copyfile(CONFIG_PATH, notebook / CONFIG_NAME)
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            token = secrets.token_urlsafe(32)
+            env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("SQUIRE_DEMO", "SQUIRE_PASSWORD", "SQUIRE_API_TOKEN", "SQUIRE_API_READ_TOKEN",
+                             "NOTEBOOK_DIR", "CONFIG_PATH", "STATIC_DIR", "HOST", "PORT")
+            }
+            env.update({"SQUIRE_SANDBOX": "1", "SQUIRE_SANDBOX_TOKEN": token})
+            log_path = Path(tmp_dir) / "sandbox.log"
+            with open(log_path, "wb") as log:
+                child = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).resolve()), "--notebook", str(notebook),
+                     "--host", "127.0.0.1", "--port", str(port), "--static", str(Path(tmp_dir) / "no-frontend")],
+                    env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                )
+            try:
+                for _ in range(100):  # up to ~5 seconds for it to start listening
+                    if child.poll() is not None:
+                        break
+                    try:
+                        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+                if child.poll() is not None:
+                    reason = log_path.read_text(encoding="utf-8", errors="replace").strip()[-600:]
+                    raise HttpError(500, "Could not start the script sandbox" + (f": {reason}" if reason else ""))
+                result = run_script(notebook / path.relative_to(NOTEBOOK_DIR), notebook, port, token, DEMO_SCRIPT_TIMEOUT_SECONDS)
+                result["changes"] = _sandbox_changes(NOTEBOOK_DIR, notebook)
+                return result
+            finally:
+                child.terminate()
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    finally:
+        DEMO_RUN_SLOTS.release()
 
 
 # Types for the frontend's files, spelled out because mimetypes reads the OS's table
@@ -1064,6 +1254,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         if parsed.path.startswith("/api/"):
+            if DEMO:
+                raise HttpError(403, "The API is off in the demo")
             # The outside API has its own tokens; the password and cookie don't apply to it.
             loopback = self.client_address[0] in LOOPBACK_ADDRESSES
             self._api_role = api_role(self.headers.get("Authorization"), loopback)
@@ -1111,7 +1303,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"outOfDate": True, "lastSaved": current}, 412)
                 return
             result = action()
-            if result is not None:
+            if result is not None and not DEMO:
                 current = touch_last_saved()
                 broadcast({
                     "type": "change",
@@ -1191,7 +1383,7 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/config":
             self._send_json(read_config())
         elif route == "/server-info":
-            self._send_json({"notebook": str(NOTEBOOK_DIR), "config": str(CONFIG_PATH)})
+            self._send_json({"notebook": str(NOTEBOOK_DIR), "config": str(CONFIG_PATH), "demo": DEMO})
         else:
             self._serve_static(route)
 
@@ -1331,6 +1523,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._body()
         if route == "/config":
+            if DEMO:
+                self._send_json({})
+                return
             with WRITE_LOCK:
                 config = json.loads(body)
                 config["lastSaved"] = read_config().get("lastSaved", 0)  # only notebook changes bump it
@@ -1384,10 +1579,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(400, "Missing name")
             self._write(params, lambda: rename_file(path, name), tree=True)
         elif route == "/run":
-            self._send_json(run_script(notebook_path(params.get("path"))))
+            path = notebook_path(params.get("path"))
+            self._send_json(run_script_in_sandbox(path) if DEMO else run_script(path))
         elif route == "/login":
             self._login()
         elif route == "/open-notebook":
+            if DEMO:
+                raise HttpError(403, "Not available in the demo")
             self._send_json(open_notebook_folder(self.client_address[0]))
         elif route == "/folder":
             path = notebook_path(params.get("path"))
@@ -1497,7 +1695,7 @@ def lan_address():
 
 def parse_settings():
     """Command-line flags override the environment variables, which override the defaults."""
-    global NOTEBOOK_DIR, TRASH_DIR, CONFIG_PATH, STATIC_DIR, HOST, PORT, PASSWORD, API_TOKEN, API_READ_TOKEN
+    global NOTEBOOK_DIR, TRASH_DIR, CONFIG_PATH, STATIC_DIR, HOST, PORT, PASSWORD, API_TOKEN, API_READ_TOKEN, DEMO
     parser = argparse.ArgumentParser(description="Squire Notes server")
     parser.add_argument("--notebook", help="the notebook folder (env NOTEBOOK_DIR; default: notebook/ in the project)")
     parser.add_argument("--config", help=f"the config file (env CONFIG_PATH; default: {CONFIG_NAME} in the notebook)")
@@ -1507,7 +1705,9 @@ def parse_settings():
     parser.add_argument("--password", help="require this password to use the app (env SQUIRE_PASSWORD; default: none)")
     parser.add_argument("--api-token", help="token for the read-write /api/ routes (env SQUIRE_API_TOKEN; default: none, API off)")
     parser.add_argument("--api-read-token", help="token for the read-only /api/ routes (env SQUIRE_API_READ_TOKEN)")
+    parser.add_argument("--demo", action="store_true", help="demo mode: nothing is saved, no login, no outside API (env SQUIRE_DEMO=1)")
     args = parser.parse_args()
+    DEMO = DEMO or args.demo
     API_TOKEN = args.api_token or API_TOKEN
     API_READ_TOKEN = args.api_read_token or API_READ_TOKEN
     if args.notebook:
@@ -1522,17 +1722,26 @@ def parse_settings():
     HOST = args.host or HOST
     PASSWORD = args.password or PASSWORD
     PORT = args.port or PORT
+    if DEMO:
+        PASSWORD = API_TOKEN = API_READ_TOKEN = None
 
 
 if __name__ == "__main__":
     parse_settings()
-    migrate_notebook_dir()
+    if DEMO:
+        # The notebook may be mounted read-only, so nothing here writes to it.
+        enable_demo_mode()
+        print("DEMO MODE: nothing is saved, there is no login and no /api/")
+    else:
+        migrate_notebook_dir()
     NOTEBOOK_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    migrate_config()
-    purge_trash()
-    threading.Thread(target=purge_trash_hourly, daemon=True).start()
-    threading.Thread(target=run_due_scripts_every_minute, daemon=True).start()
+    if not DEMO:
+        migrate_config()
+        purge_trash()
+        threading.Thread(target=purge_trash_hourly, daemon=True).start()
+        if not SANDBOX:
+            threading.Thread(target=run_due_scripts_every_minute, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Serving notebook {NOTEBOOK_DIR}")
     print(f"  On this machine: http://localhost:{PORT}")

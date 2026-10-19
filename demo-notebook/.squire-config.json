@@ -1,0 +1,21 @@
+{
+  "sidebarWidth": 260,
+  "sidebarCollapsed": false,
+  "lastOpenNote": "Welcome.json",
+  "bottomPanelHeightPercent": 30,
+  "bottomPanelCollapsed": true,
+  "sidebarTab": "files",
+  "layout": {
+    "root": {
+      "kind": "pane",
+      "path": "Welcome.json"
+    },
+    "focused": 0
+  },
+  "variables": [],
+  "recentNotes": [
+    "Welcome.json"
+  ],
+  "rightPanelCollapsed": true,
+  "lastSaved": 1
+}

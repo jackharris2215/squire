@@ -1,0 +1,57 @@
+# A public try-it-out copy of Squire: the real app on a sample notebook, in demo mode.
+# Nothing is ever saved (a reload puts everything back), there is no login and no outside
+# API, and scripts can be run but not edited (see "Demo mode" in server/server.py).
+#
+# Run with: docker compose -f docker-compose.demo.yml up -d --build
+# then open http://localhost:8766
+#
+# To put it on the internet, it also runs a Cloudflare Tunnel (the cloudflared service): an
+# outbound connection to Cloudflare, so no router ports are opened. Setup, once:
+#   1. Cloudflare dashboard > Zero Trust > Networks > Tunnels > create a tunnel.
+#   2. Copy its token into a file named .env next to this one:  TUNNEL_TOKEN=eyJ...
+#   3. On the tunnel, add a public hostname (say demo.yourdomain.com) with the service
+#      http://squire-demo:8765   (the service name below, not localhost).
+# Without a token cloudflared just keeps failing to start; to run only the demo (on this machine,
+# http://localhost:8766): docker compose -f docker-compose.demo.yml up -d --build squire-demo
+#
+# The project name below keeps it apart from the normal docker-compose.yml, so starting
+# or stopping one never touches the other.
+name: squire-demo
+
+services:
+  squire-demo:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8766:8765" # this machine only; the tunnel reaches it over the compose network
+    environment:
+      - SQUIRE_DEMO=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - TZ=America/Anchorage
+    volumes:
+      - ./demo-notebook:/data/notebook:ro # the sample notebook; read-only, the demo never writes to it
+    # The demo runs the sample scripts for anyone who visits, so keep the container boxed in.
+    read_only: true
+    tmpfs:
+      - /tmp # where each script run gets its throwaway copy of the notebook
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 200
+    cpus: 1.0
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+    depends_on:
+      - squire-demo
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

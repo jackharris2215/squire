@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "created": "2026-10-01",
+    "modified": "2026-10-01"
+  },
+  "blocks": [
+    [
+      {
+        "id": "block-demo-031",
+        "type": "text",
+        "content": "Type two opening square brackets in a block to link to another note with autocomplete. Links to [[Welcome]] and [[Blocks and Formatting]] work like this, and renaming a note updates every link to it."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-032",
+        "type": "text",
+        "content": "Open the **Links** tab in the right panel to see where a note points, and the **Block browser** to jump around a long note."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-033",
+        "type": "text",
+        "content": "Names are unique across the whole notebook, so a link is always unambiguous."
+      }
+    ]
+  ]
+}

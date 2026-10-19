@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { highlightPython } from './pythonHighlight'
+import { demoMode } from './api'
 import { editScript, runScript, saveScript, scriptCache, scriptRuns } from './store'
 
 // What a pane shows for a script (a Python file in the notebook): a plain text box, Run, and
@@ -24,6 +25,7 @@ function syncScroll() {
 }
 
 const status = computed(() => {
+  if (demoMode.value) return 'Read-only in the demo'
   const state = entry.value?.state
   return state === 'saving' ? 'Saving…' : state === 'error' ? 'Not saved' : 'Saved'
 })
@@ -83,6 +85,8 @@ function newLine(box: HTMLTextAreaElement) {
 function onKeydown(event: KeyboardEvent) {
   const box = event.target as HTMLTextAreaElement
   const plain = !event.ctrlKey && !event.metaKey && !event.altKey
+  // In the demo the code can't be changed, only run.
+  if (demoMode.value && !((event.ctrlKey || event.metaKey) && event.key === 'Enter')) return
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     saveScript(props.path)
@@ -119,6 +123,7 @@ function onKeydown(event: KeyboardEvent) {
         ref="boxEl"
         class="script-text"
         :value="entry.text"
+        :readonly="demoMode"
         spellcheck="false"
         autocapitalize="off"
         autocomplete="off"

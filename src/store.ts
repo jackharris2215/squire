@@ -1,5 +1,5 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { SERVER_URL, lastSaved, serverWrite, whenWritesDone } from './api'
+import { SERVER_URL, demoMode, lastSaved, serverWrite, whenWritesDone } from './api'
 import { askConfirm } from './dialog'
 import { renaming, settingsOpen } from './overlay'
 import { closeDrawer, isMobile, toggleDrawer } from './mobile'
@@ -465,7 +465,7 @@ async function refreshScript(path: string) {
 
 export function editScript(path: string, text: string) {
   const entry = scriptCache.get(path)
-  if (!entry || text === entry.text) return
+  if (!entry || text === entry.text || demoMode.value) return // a demo's scripts can only be run
   entry.text = text
   entry.dirty = true
   entry.state = 'saving'
@@ -514,11 +514,33 @@ export async function runScript(path: string) {
     const res = await fetch(`${SERVER_URL}/run?path=${encodeURIComponent(path)}`, { method: 'POST' })
     const data = await res.json()
     if (!res.ok) run.error = data.error ?? `The server answered ${res.status}.`
-    else Object.assign(run, { output: data.output, exitCode: data.exitCode, timedOut: data.timedOut })
+    else {
+      Object.assign(run, { output: data.output, exitCode: data.exitCode, timedOut: data.timedOut })
+      if (data.changes) await showScriptChanges(data.changes)
+    }
   } catch {
     run.error = 'Cannot reach the server.'
   }
   run.running = false
+}
+
+// Demo mode only: a script runs on a throwaway copy of the notebook and the server reports what
+// it changed. Shown here like any change (the sidebar, open notes), but never saved, so a reload
+// brings the notebook back.
+async function showScriptChanges(changes: { notes?: Record<string, any>; deleted?: string[]; folders?: string[] }) {
+  for (const folder of changes.folders ?? []) if (!folders.value.includes(folder)) folders.value.push(folder)
+  for (const [path, raw] of Object.entries(changes.notes ?? {})) {
+    const fresh = normalizeNote(raw)
+    if (!files.value.includes(path)) {
+      const title = nameFromPath(path)
+      files.value.push(path)
+      noteList.value.push({ title, path })
+      noteIndex.value[title] = path
+    }
+    if (noteCache.has(path)) await swapInNote(path, fresh)
+    else noteCache.set(path, fresh)
+  }
+  for (const path of changes.deleted ?? []) forgetNote(path)
 }
 
 // A new script in `folder`, opened for editing.
@@ -593,7 +615,11 @@ function mergeNote(target: Note, fresh: Note) {
 async function refreshNote(path: string) {
   const res = await fetch(`${SERVER_URL}/file?path=${encodeURIComponent(path)}`)
   if (!res.ok) return
-  const fresh = normalizeNote(await res.json())
+  await swapInNote(path, normalizeNote(await res.json()))
+}
+
+// Swaps `fresh` in for the cached note at `path` if it differs (see refreshNote).
+async function swapInNote(path: string, fresh: Note) {
   const target = noteCache.get(path)
   if (!target || sameJson(JSON.parse(JSON.stringify(target)), fresh)) return
   const entry = tracked.get(path)

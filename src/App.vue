@@ -20,7 +20,7 @@ import VariableMenu from './VariableMenu.vue'
 import { convertValue, globalVariables, variableProblem } from './variables'
 import { canInsertAtCursor, insertAtCursor } from './insert'
 import type { Block, BookmarkFolder, MenuContext, SidebarRow, Variable } from './types'
-import { checkSession, needsLogin, outOfDate, reloadPage, setStalenessInterval, startStalenessPolling } from './api'
+import { checkDemo, checkSession, demoMode, needsLogin, outOfDate, reloadPage, setStalenessInterval, startStalenessPolling } from './api'
 import LoginScreen from './LoginScreen.vue'
 import { closeDrawer, isMobile, mobileDrawer, toggleDrawer } from './mobile'
 import { startSwipeGestures, swipeDrawers } from './swipe'
@@ -271,7 +271,7 @@ onMounted(async () => {
     loading.value = false
     return
   }
-  await Promise.all([loadFiles(), loadConfig()])
+  await Promise.all([loadFiles(), loadConfig(), checkDemo()])
   startAppearance()
   startSwipeGestures(swipeDrawers)
   restoreOpenNotes()
@@ -441,6 +441,7 @@ onMounted(async () => {
     <QuickSwitcher ref="quickSwitcher" />
     <BlockMenus ref="blockMenus" />
     <LoginScreen v-if="needsLogin" />
+    <div v-if="demoMode" class="demo-banner" role="status">Demo: changes won't be saved</div>
     <div v-if="loading" class="loading-overlay">
       <div class="loading-spinner" />
     </div>
@@ -885,5 +886,20 @@ onMounted(async () => {
   .mobile-drawer-fab.right {
     right: 1.25rem;
   }
+}
+
+.demo-banner {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 60;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
 }
 </style>

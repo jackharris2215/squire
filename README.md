@@ -74,6 +74,20 @@ The image builds the app and runs the server, which serves both. Your notebook i
 `./notebook` folder on the host, mounted at `/data/notebook` (notes, trash and settings all live
 there).
 
+## Demo mode
+
+For a public try-it-out copy, start the server with `SQUIRE_DEMO=1` (or `--demo`). Visitors get the
+real app, but nothing is ever saved (reloading puts everything back), there is no login and the
+outside API is off. Scripts can be run but not edited; a script's changes (a new note, say) show up
+in the app like any other, and a reload undoes them. A small banner says it is a demo.
+
+`docker-compose.demo.yml` runs it against the sample notebook in `demo-notebook/`, on port 8766 and
+apart from the normal container:
+
+```sh
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
 ## Reaching it from other devices
 
 The server listens on every interface by default and prints its LAN address on startup, so any
