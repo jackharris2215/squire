@@ -4,6 +4,8 @@ Squire for short: a personal note-taking app in the browser. Notes are plain JSO
 `notebook/` folder, built from Notion-style blocks. Vue 3 + Vite + TypeScript on the front, one
 standard-library Python file on the back.
 
+**Live demo:** [demo.squirenotes.com](https://demo.squirenotes.com) (nothing you do there is saved)
+
 ## Features
 
 - **Blocks:** text, tables (editable grids), checklists, bulleted lists, columns, per-block

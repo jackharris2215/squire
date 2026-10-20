@@ -52,6 +52,13 @@
         "type": "text",
         "content": "Notes are plain JSON files, one per note, kept in a single notebook folder."
       }
+    ],
+    [
+      {
+        "id": "block-demo-github-1",
+        "type": "text",
+        "content": "Squire is open source: [github.com/jackharris2215/squire](https://github.com/jackharris2215/squire)"
+      }
     ]
   ]
 }
