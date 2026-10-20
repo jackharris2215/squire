@@ -55,7 +55,63 @@
     ],
     [
       {
-        "id": "block-demo-github-1",
+        "id": "block-demo-docker-1",
+        "type": "text",
+        "content": "## Run your own"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-2",
+        "type": "text",
+        "content": "Squire runs from a single Docker image (amd64 and arm64, so PCs, Raspberry Pis and Apple Silicon all work). Your notes are plain files in a folder you choose, and updating the image never touches them."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-3",
+        "type": "text",
+        "content": "**With docker run:**"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-4",
+        "type": "text",
+        "content": "```sh\ndocker run -d --name squire -p 8765:8765 \\\n  -e SQUIRE_PASSWORD=changeme \\\n  -v \"$(pwd)/notebook:/data/notebook\" \\\n  ghcr.io/jackharris2215/squire:latest\n```"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-5",
+        "type": "text",
+        "content": "**Or with Docker Compose**, in a `docker-compose.yml`:"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-6",
+        "type": "text",
+        "content": "```yaml\nservices:\n  squire:\n    image: ghcr.io/jackharris2215/squire:latest\n    restart: unless-stopped\n    ports:\n      - \"8765:8765\"\n    environment:\n      - SQUIRE_PASSWORD=changeme   # the password the app asks for\n    volumes:\n      - ./notebook:/data/notebook  # your notes live here\n```"
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-7",
+        "type": "text",
+        "content": "Then run `docker compose up -d` and open http://localhost:8765. To update later: `docker compose pull && docker compose up -d`."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-8",
+        "type": "text",
+        "content": "Always set `SQUIRE_PASSWORD`, and don't expose the port to the internet. Use a version tag like `:1.0.0` instead of `:latest` to stay on one release."
+      }
+    ],
+    [
+      {
+        "id": "block-demo-docker-9",
         "type": "text",
         "content": "Squire is open source: [github.com/jackharris2215/squire](https://github.com/jackharris2215/squire)"
       }
