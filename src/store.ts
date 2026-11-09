@@ -427,6 +427,25 @@ export function saveScriptSchedule(path: string, schedule: ScriptSchedule): Prom
   })
 }
 
+// A script's triggers: the events that run it (ids from the server's TRIGGER_EVENTS, which it
+// also sends along so the menu needs no list of its own). Fetched only when the menu is opened.
+export interface TriggerEvent {
+  id: string
+  label: string
+}
+
+export async function fetchScriptTriggers(path: string): Promise<{ triggers: string[]; events: TriggerEvent[] } | null> {
+  const res = await fetch(`${SERVER_URL}/script-triggers?path=${encodeURIComponent(path)}`)
+  return res.ok ? await res.json() : null
+}
+
+export function saveScriptTriggers(path: string, triggers: string[]): Promise<unknown> {
+  return serverWrite(`/script-triggers?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ triggers }),
+  })
+}
+
 export const scriptCache = reactive(new Map<string, ScriptState>())
 export const scriptRuns = reactive(new Map<string, ScriptRun>())
 const scriptTimers = new Map<string, ReturnType<typeof setTimeout>>() // pending autosaves

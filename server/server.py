@@ -317,8 +317,11 @@ def rename_links(replacements):
 def put_note(path, note, body):
     if path.exists() and read_json(path) == note:
         return None  # e.g. a client just opened it; don't touch the file
+    is_new = not path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
+    if is_new:
+        emit_event("note-created", path=rel(path))
     return {}
 
 
@@ -388,7 +391,7 @@ SCRIPT_TIMEOUT_SECONDS = 60
 SCRIPT_OUTPUT_LIMIT = 100_000  # characters of output kept
 
 
-def run_script(path, notebook=None, port=None, token=None, timeout=None):
+def run_script(path, notebook=None, port=None, token=None, timeout=None, event=None):
     """Run a script as its own process (so a crash or an endless loop can't take the server
     down) and return what it printed. Its code is pulled out of the JSON it's stored in and
     written to a temp file (same name, so a traceback still points somewhere sensible) since
@@ -396,7 +399,8 @@ def run_script(path, notebook=None, port=None, token=None, timeout=None):
     the `squire` module next to this file; the internal token lets it use /api/ on this server.
     This is not a notebook change, and it must not hold WRITE_LOCK: the script's own writes
     need it. The notebook, port, token and time limit default to this server's own; the demo's
-    sandbox (run_script_in_sandbox) passes those of its private copy."""
+    sandbox (run_script_in_sandbox) passes those of its private copy. `event` (a dict, for a
+    script run by a trigger) is handed over as JSON in SQUIRE_EVENT."""
     if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
         raise HttpError(400, "That is not a script")
     code = read_script(path)
@@ -412,6 +416,9 @@ def run_script(path, notebook=None, port=None, token=None, timeout=None):
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
     })
+    env.pop("SQUIRE_EVENT", None)
+    if event is not None:
+        env["SQUIRE_EVENT"] = json.dumps(event)
     timed_out = False
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / path.name
@@ -444,6 +451,74 @@ def put_script_schedule(path, schedule):
         data["schedule"] = schedule
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return {}
+
+
+def put_script_triggers(path, triggers):
+    """Sets a script's triggers (a list of event names from TRIGGER_EVENTS; an empty list
+    removes them), keeping its code and any other metadata untouched."""
+    if path.suffix.lower() != SCRIPT_EXT or not path.is_file():
+        raise HttpError(400, "That is not a script")
+    data = _load_script(path)
+    if not triggers:
+        if "triggers" not in data:
+            return None
+        del data["triggers"]
+    else:
+        data["triggers"] = triggers
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {}
+
+
+# --- Triggers ---
+# A script's "triggers" (in its own JSON, alongside "script") is a list of event names; the
+# script runs whenever one of them happens. Code that changes the notebook reports it with
+# emit_event("note-created", path=...), which only puts it on a queue: a worker thread
+# (run_triggered_scripts), started at startup, takes events off it once the change is done and
+# the write lock is free, and runs every script listening for that event, one at a time, with the
+# event in SQUIRE_EVENT. To add an event: add it to TRIGGER_EVENTS (the app's menu lists these)
+# and call emit_event() where it happens. Changes made by a script itself (its requests carry
+# the internal token) never fire triggers, so a script can't set itself off in a loop. The demo
+# and the demo's sandbox never fire them.
+
+TRIGGER_EVENTS = {
+    "note-created": "A note is created",
+}
+
+EVENT_CONTEXT = threading.local()  # per request thread: from_script is True for a script's own request
+EVENT_QUEUE = queue.Queue()
+
+
+def emit_event(kind, **data):
+    if DEMO or SANDBOX or getattr(EVENT_CONTEXT, "from_script", False):
+        return
+    EVENT_QUEUE.put({"event": kind, **data})
+
+
+def scripts_listening(kind):
+    """Every script whose triggers include `kind`."""
+    found = []
+    for path in notebook_items():
+        if not path.is_file() or path.suffix.lower() != SCRIPT_EXT:
+            continue
+        try:
+            triggers = _load_script(path).get("triggers")
+        except (OSError, ValueError):
+            continue
+        if isinstance(triggers, list) and kind in triggers:
+            found.append(path)
+    return found
+
+
+def run_triggered_scripts():
+    while True:
+        event = EVENT_QUEUE.get()
+        try:
+            for path in scripts_listening(event["event"]):
+                result = run_script(path, event=event)
+                if result["exitCode"] != 0:
+                    print(f"Trigger script {rel(path)} failed ({event['event']}): {result['output'][-500:]}")
+        except Exception as err:
+            print(f"Trigger error: {err}")
 
 
 # --- Scheduling ---
@@ -761,12 +836,13 @@ def demo_move_item(source, dest_dir):
 
 
 def enable_demo_mode():
-    global put_note, put_image, put_script, put_script_schedule, delete_file, delete_folder
+    global put_note, put_image, put_script, put_script_schedule, put_script_triggers, delete_file, delete_folder
     global rename_file, make_folder, rename_folder, move_item
     put_note = demo_put_note
     put_image = demo_refuse_image
     put_script = demo_refuse_script
     put_script_schedule = demo_refuse_script
+    put_script_triggers = demo_refuse_script
     delete_file = demo_delete
     delete_folder = demo_delete
     rename_file = demo_rename_file
@@ -902,7 +978,7 @@ STATIC_TYPES = {
 # The routes that need the password (everything else is the public frontend).
 API_ROUTES = {
     "/files", "/folders", "/file", "/file-info", "/config", "/server-info", "/rename",
-    "/folder", "/folder-rename", "/move", "/image", "/script", "/script-schedule", "/run",
+    "/folder", "/folder-rename", "/move", "/image", "/script", "/script-schedule", "/script-triggers", "/run",
     "/open-notebook", "/events",
 }
 
@@ -1010,6 +1086,7 @@ def api_create_note(path, spec):
         raise HttpError(409, "A note with that name already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     api_save_note(path, spec)
+    emit_event("note-created", path=rel(path))
     return {"path": rel(path)}
 
 
@@ -1253,12 +1330,15 @@ class Handler(BaseHTTPRequestHandler):
     def _request(self):
         parsed = urlparse(self.path)
         params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        EVENT_CONTEXT.from_script = False
         if parsed.path.startswith("/api/"):
             if DEMO:
                 raise HttpError(403, "The API is off in the demo")
             # The outside API has its own tokens; the password and cookie don't apply to it.
             loopback = self.client_address[0] in LOOPBACK_ADDRESSES
             self._api_role = api_role(self.headers.get("Authorization"), loopback)
+            _, _, supplied = (self.headers.get("Authorization") or "").partition(" ")
+            EVENT_CONTEXT.from_script = loopback and hmac.compare_digest(supplied.strip().encode("utf-8"), INTERNAL_TOKEN.encode("utf-8"))
             if not self._api_role:
                 if not (API_TOKEN or API_READ_TOKEN):
                     raise HttpError(403, "The API is off: set SQUIRE_API_TOKEN (or SQUIRE_API_READ_TOKEN) on the server")
@@ -1380,6 +1460,15 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(404, "File not found")
             data = _load_script(path)
             self._send_json({"schedule": data.get("schedule"), "lastRun": data.get("lastRun")})
+        elif route == "/script-triggers":
+            path = notebook_path(params.get("path"))
+            if not path.is_file():
+                raise HttpError(404, "File not found")
+            triggers = _load_script(path).get("triggers")
+            self._send_json({
+                "triggers": triggers if isinstance(triggers, list) else [],
+                "events": [{"id": k, "label": v} for k, v in TRIGGER_EVENTS.items()],
+            })
         elif route == "/config":
             self._send_json(read_config())
         elif route == "/server-info":
@@ -1520,6 +1609,17 @@ class Handler(BaseHTTPRequestHandler):
             if schedule is not None and not isinstance(schedule, dict):
                 raise HttpError(400, '"schedule" must be an object or null')
             self._write(params, lambda: put_script_schedule(path, schedule), notes=[rel(path)])
+            return
+        if route == "/script-triggers":
+            path = notebook_path(params.get("path"))
+            try:
+                triggers = json.loads(self._body() or "{}").get("triggers")
+            except ValueError:
+                raise HttpError(400, "Body must be JSON")
+            if not isinstance(triggers, list) or not all(t in TRIGGER_EVENTS for t in triggers):
+                raise HttpError(400, '"triggers" must be a list of known event names')
+            triggers = list(dict.fromkeys(triggers))
+            self._write(params, lambda: put_script_triggers(path, triggers), notes=[rel(path)])
             return
         body = self._body()
         if route == "/config":
@@ -1742,6 +1842,7 @@ if __name__ == "__main__":
         threading.Thread(target=purge_trash_hourly, daemon=True).start()
         if not SANDBOX:
             threading.Thread(target=run_due_scripts_every_minute, daemon=True).start()
+            threading.Thread(target=run_triggered_scripts, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Serving notebook {NOTEBOOK_DIR}")
     print(f"  On this machine: http://localhost:{PORT}")

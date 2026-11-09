@@ -20,7 +20,7 @@ import { FORMATS, toggleWrap } from './format'
 import type { Block, FloatingBlock, MenuContext, Note } from './types'
 import { blockStyle } from './blocks'
 import { canRedoFor, canUndoFor } from './history'
-import { SERVER_URL } from './api'
+import { SERVER_URL, demoMode } from './api'
 import {
   addImage,
   allBlocks,
@@ -31,6 +31,7 @@ import {
   defaultScriptSchedule,
   deleteNote,
   fetchScriptSchedule,
+  fetchScriptTriggers,
   findAnyBlock,
   findBlockPosition as findPosition,
   imageIndex,
@@ -44,6 +45,7 @@ import {
   redoEdit,
   renameEntry,
   saveScriptSchedule,
+  saveScriptTriggers,
   unhookBlock,
   placeBlock,
   saveStateFor,
@@ -53,6 +55,7 @@ import {
   undoEdit,
   validateTitle,
   type ScriptSchedule,
+  type TriggerEvent,
 } from './store'
 
 // The right side of the app: the note's header (title, ⋮ menu, close) and the
@@ -183,13 +186,25 @@ const showScheduleMenu = ref(false)
 const scheduleMenuRef = ref<HTMLElement | null>(null)
 const schedule = ref<ScriptSchedule | null>(null)
 const scheduleLastRun = ref<string | null>(null)
+// The same menu also has the script's triggers: the events that run it. The list of events
+// comes from the server, along with which ones this script listens for.
+const triggerEvents = ref<TriggerEvent[]>([])
+const triggers = ref<string[]>([])
 
 watch(showScheduleMenu, async (open) => {
   if (!open || !props.path) return
-  const data = await fetchScriptSchedule(props.path)
+  const [data, triggerData] = await Promise.all([fetchScriptSchedule(props.path), fetchScriptTriggers(props.path)])
+  triggerEvents.value = triggerData?.events ?? []
+  triggers.value = triggerData?.triggers ?? []
   schedule.value = data?.schedule ?? defaultScriptSchedule()
   scheduleLastRun.value = data?.lastRun ?? null
 })
+
+function setTrigger(id: string, on: boolean) {
+  if (!props.path) return
+  triggers.value = on ? [...triggers.value, id] : triggers.value.filter((t) => t !== id)
+  saveScriptTriggers(props.path, triggers.value)
+}
 
 // Switching to a different pane content (another script, a note, nothing) closes the menu
 // and drops the cached schedule, the same way watch(note, ...) below does for notes.
@@ -199,6 +214,7 @@ watch(
     showScheduleMenu.value = false
     schedule.value = null
     scheduleLastRun.value = null
+    triggers.value = []
   },
 )
 
@@ -1784,6 +1800,18 @@ onUnmounted(() => {
               (month/day)
             </label>
           </div>
+          <div v-if="triggerEvents.length" class="context-separator" />
+          <div v-if="triggerEvents.length" class="schedule-triggers-title">Run when</div>
+          <label v-for="event in triggerEvents" :key="event.id" class="settings-row">
+            <input
+              type="checkbox"
+              class="checkbox"
+              :checked="triggers.includes(event.id)"
+              :disabled="demoMode"
+              @change="setTrigger(event.id, ($event.target as HTMLInputElement).checked)"
+            />
+            {{ event.label }}
+          </label>
           <div class="context-separator" />
           <button class="context-item" @click="locateInBrowser">Locate in browser</button>
           <button class="context-item" @click="startTitleRename">Rename</button>
@@ -2307,6 +2335,12 @@ onUnmounted(() => {
 .settings-row.disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.schedule-triggers-title {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  padding: 0.2rem 0.5rem 0;
 }
 
 .schedule-datetime {

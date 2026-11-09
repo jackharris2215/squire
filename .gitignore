@@ -10,3 +10,4 @@ config.json
 docker-compose.yml
 
 .env
+HOMELAB.md

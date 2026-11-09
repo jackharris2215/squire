@@ -49,6 +49,13 @@ def _api(method, route, params=None, body=None):
         raise SquireError(f"Could not reach the Squire server at {BASE_URL}: {err}") from None
 
 
+def event():
+    """For a script run by a trigger: what happened, e.g. {"event": "note-created",
+    "path": "Daily/2026-11-09.json"}. None when the script was run any other way."""
+    raw = os.environ.get("SQUIRE_EVENT")
+    return json.loads(raw) if raw else None
+
+
 def _path(name):
     """The path of an existing note, from its name or its path."""
     name = name.strip().strip("/")
