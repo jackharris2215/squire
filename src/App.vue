@@ -9,9 +9,9 @@ import NoteInfo from './NoteInfo.vue'
 import PaneLayout from './PaneLayout.vue'
 import RecentNotesList from './RecentNotesList.vue'
 import SettingsPage from './SettingsPage.vue'
-import { layout } from './layout'
+import { focusedPane, layout } from './layout'
 import { startAppearance } from './appearance'
-import { settingsOpen } from './overlay'
+import { settingsOpen, switcherOpen } from './overlay'
 import FileTree from './FileTree.vue'
 import QuickSwitcher from './QuickSwitcher.vue'
 import SidebarMenu from './SidebarMenu.vue'
@@ -26,7 +26,7 @@ import { closeDrawer, isMobile, mobileDrawer, toggleDrawer } from './mobile'
 import { startSwipeGestures, swipeDrawers } from './swipe'
 import { DEFAULT_STALENESS_CHECK_SECONDS } from './notebookSettings'
 import { startLiveSync } from './sync'
-import { config, loadConfig, loadFiles, noteCache, openDailyNote, openWeeklyNote, queueConfigSave, restoreOpenNotes, selectedFile } from './store'
+import { config, loadConfig, loadFiles, noteCache, openDailyNote, openWeeklyNote, paneBack, paneForward, queueConfigSave, restoreOpenNotes, selectedFile } from './store'
 
 const sidebarRef = ref<HTMLElement | null>(null)
 
@@ -182,8 +182,42 @@ function toggleSettings() {
   settingsOpen.value = !settingsOpen.value
 }
 
+// Steps the focused pane back or forward through the notes it has shown (the same as its
+// header's buttons), from Alt+Left/Right and the mouse's back/forward buttons. If the
+// settings page is covering the panes it closes first, so the change is visible.
+function navigatePane(direction: 'back' | 'forward') {
+  if (switcherOpen.value) return
+  closeContextMenu()
+  settingsOpen.value = false
+  if (direction === 'back') paneBack(focusedPane.value.id)
+  else paneForward(focusedPane.value.id)
+}
+
+// The mouse's side buttons are 3 (back) and 4 (forward). The browser would leave the app for
+// its own history, so both events are cancelled; the step happens on mouseup.
+function onWindowMouseup(event: MouseEvent) {
+  if (event.button !== 3 && event.button !== 4) return
+  event.preventDefault()
+  navigatePane(event.button === 3 ? 'back' : 'forward')
+}
+
+function cancelSideButton(event: MouseEvent) {
+  if (event.button === 3 || event.button === 4) event.preventDefault()
+}
+
 function onWindowKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeContextMenu()
+
+  // Alt+Left / Alt+Right go back / forward between notes. On a Mac, Option+arrow moves the
+  // cursor by a word in a text box, so it is left alone there.
+  const inTextBox = event.target instanceof HTMLElement && event.target.matches('textarea, input, [contenteditable]')
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
+  if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !(isMac && inTextBox)) {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      navigatePane(event.key === 'ArrowLeft' ? 'back' : 'forward')
+    }
+  }
 
   // Ctrl+P opens (or closes) the note switcher instead of the browser's print dialog.
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'p') {
@@ -289,6 +323,9 @@ onMounted(async () => {
   window.addEventListener('mousemove', onBottomPanelResize)
   window.addEventListener('mouseup', stopBottomPanelResize)
   window.addEventListener('keydown', onWindowKeydown)
+  window.addEventListener('mouseup', onWindowMouseup)
+  window.addEventListener('mousedown', cancelSideButton)
+  window.addEventListener('auxclick', cancelSideButton)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('contextmenu', closeContextMenu)
   window.addEventListener('mousedown', ignoreRightMousedown)
