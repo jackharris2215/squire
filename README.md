@@ -167,6 +167,17 @@ squire.append("Daily log", "Checked in")   # a note is given by its name or its 
 ```
 
 See `server/squire.py` for everything it can do. A script can also carry a one-time or repeating
-schedule, set from its editor. A script can change or delete anything in the notebook (deleted
+schedule, set from its editor, or run when something happens (a trigger, ticked in the same
+menu: for now "A note is created"). A triggered script finds out what happened with
+`squire.event()`, e.g. `{"event": "note-created", "path": "Daily/2026-11-09.json"}` (None when run
+any other way):
+
+```python
+event = squire.event()
+if event:
+    squire.append("Log", event["path"])
+```
+
+A script's own changes never fire triggers, so scripts can't set each other off. A script can change or delete anything in the notebook (deleted
 notes go to the trash), and anyone who can log in can run code on the server this way, so only use
 this on a network you trust.
