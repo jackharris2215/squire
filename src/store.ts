@@ -1468,6 +1468,44 @@ export function placeBlock(path: string, blockId: string, rowIndex: number) {
   target.blocks.splice(at, 0, [block])
 }
 
+// Moves blocks (by id, hooked or floating) from one open note to the end of another: each
+// becomes a row of its own, in the order they have in the source, and a floating one is hooked.
+// The target may not be open, so it is loaded first and saved right here (autosave only
+// watches notes shown in a pane). A block keeps its id unless the target already has it.
+export async function moveBlocksToNote(fromPath: string, blockIds: string[], toPath: string) {
+  if (fromPath === toPath) return
+  await ensureLoaded(toPath)
+  const source = noteCache.get(fromPath)
+  const target = noteCache.get(toPath)
+  if (!source || !target) return
+  const wanted = new Set(blockIds)
+  const taken = new Set(allBlocks(target).map((b) => b.id))
+  let moved = false
+  for (const block of allBlocks(source).filter((b) => wanted.has(b.id))) {
+    const copy = JSON.parse(JSON.stringify(block)) as Block & Partial<FloatingBlock>
+    const pos = findBlockPosition(source, block.id)
+    if (pos) {
+      const row = source.blocks[pos.rowIndex]!
+      row.splice(pos.colIndex, 1)
+      if (row.length === 0) source.blocks.splice(pos.rowIndex, 1)
+    } else if (source.floating) {
+      source.floating.splice(source.floating.findIndex((b) => b.id === block.id), 1)
+      if (!source.floating.length) delete source.floating // the field exists only while a block floats
+      delete copy.x
+      delete copy.y
+      delete copy.width
+      delete copy.z
+    } else continue
+    if (taken.has(copy.id)) copy.id = `block-${randomUUID()}`
+    taken.add(copy.id)
+    target.blocks.push([copy])
+    moved = true
+  }
+  if (!moved) return
+  if (tracked.has(toPath)) await saveNoteAt(toPath)
+  else await serverWrite(`/file?path=${encodeURIComponent(toPath)}`, { method: 'PUT', body: JSON.stringify(target, null, 2) })
+}
+
 // --- Undo and redo for a note's blocks, by path ---
 
 export function undoEdit(path: string) {

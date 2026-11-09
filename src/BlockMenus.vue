@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { ALIGNMENTS, COLORS } from './blocks'
-import { allBlocks, breakUndoStep, findAnyBlock, findBlockPosition, hookBlock, noteCache } from './store'
+import { allBlocks, breakUndoStep, findAnyBlock, findBlockPosition, hookBlock, moveBlocksToNote, noteCache } from './store'
+import { pickNote } from './pickNote'
 import { parseTable, serializeTable, type TableData } from './table'
 import type { Block, MenuContext } from './types'
 import { randomUUID } from './uuid'
@@ -112,6 +113,19 @@ function insertAdjacent(where: 'above' | 'below') {
   context?.clearSelection()
   close()
   context?.edit(newBlock.id)
+}
+
+// Asks for a note with the Ctrl+P popup, then moves the targeted blocks to its end.
+async function moveBlocks() {
+  const from = menuContext.value?.path
+  const context = menuContext.value
+  const ids = targetBlocks.value.map((b) => b.id)
+  if (!from || !ids.length) return
+  close()
+  const to = await pickNote({ placeholder: 'Move to which note…', exclude: from })
+  if (!to) return
+  await moveBlocksToNote(from, ids, to)
+  context?.clearSelection()
 }
 
 // Both close the menu and need no confirmation: undo brings the blocks back. A copy
@@ -272,6 +286,7 @@ const moveColumn = (by: -1 | 1) =>
     <button class="context-item" :disabled="!hookedTargets.length" @click="insertAdjacent('below')">Below</button>
     <div class="context-separator" />
     <button class="context-item" @click="duplicateBlock">Duplicate {{ targetLabel }}</button>
+    <button class="context-item" @click="moveBlocks">Move to...</button>
     <button v-if="hookedTargets.length" class="context-item" @click="unhookBlocks">
       Unhook {{ hookedTargets.length > 1 ? `${hookedTargets.length} blocks` : 'block' }}
     </button>

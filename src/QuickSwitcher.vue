@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { isImagePath, isPdfPath, isScriptPath, selectFile } from './store'
 import { findNotes, folderOf } from './noteSearch'
 import { switcherOpen } from './overlay'
+import { registerNotePicker, type PickNoteOptions } from './pickNote'
 import FileIcon from './FileIcon.vue'
 
 // Ctrl+P: a search box for jumping to a note by name. The parent opens it
@@ -21,9 +22,29 @@ async function open() {
   input.value?.focus()
 }
 
+// Set while the popup is asking for a note on behalf of other code (see pickNote.ts): a choice
+// goes back to it instead of opening the note, and only notes are listed.
+let picking: { resolve: (path: string | null) => void; options: PickNoteOptions } | null = null
+const pickOptions = ref<PickNoteOptions | null>(null)
+
 function close() {
   isOpen.value = false
+  picking?.resolve(null) // dismissed without a choice
+  picking = null
+  pickOptions.value = null
 }
+
+function pick(options: PickNoteOptions): Promise<string | null> {
+  if (isOpen.value) close()
+  return new Promise((resolve) => {
+    picking = { resolve, options }
+    pickOptions.value = options
+    open()
+  })
+}
+
+const unregisterPicker = registerNotePicker(pick)
+onBeforeUnmount(unregisterPicker)
 
 function toggle() {
   if (isOpen.value) close()
@@ -32,7 +53,9 @@ function toggle() {
 
 defineExpose({ toggle })
 
-const results = computed(() => findNotes(query.value))
+const results = computed(() =>
+  findNotes(query.value, pickOptions.value ? { notesOnly: true, exclude: pickOptions.value.exclude } : {}),
+)
 
 watch(query, () => {
   selected.value = 0
@@ -43,6 +66,13 @@ watch(isOpen, (open) => {
 })
 
 function openNote(path: string) {
+  const asking = picking
+  if (asking) {
+    picking = null // a choice, not a dismissal
+    close()
+    asking.resolve(path)
+    return
+  }
   close()
   selectFile(path)
 }
@@ -79,7 +109,7 @@ async function scrollToSelected() {
         v-model="query"
         class="switcher-input"
         type="text"
-        placeholder="Find a note or image…"
+        :placeholder="pickOptions?.placeholder ?? 'Find a note or image…'"
         spellcheck="false"
         @keydown="onKeydown"
       />

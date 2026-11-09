@@ -5,15 +5,17 @@ import { baseName, imageList, noteList, pdfList, scriptList } from './store'
 // A note's name is its title; anything else's is its full filename, extension included.
 // Every word typed must appear somewhere in the name (any case). Names that start
 // with what was typed come first, then the rest alphabetically.
-export function findNotes(query: string) {
+// `notesOnly` leaves out images, PDFs and scripts; `exclude` is one path to leave out.
+export function findNotes(query: string, options: { notesOnly?: boolean; exclude?: string } = {}) {
   const typed = query.trim().toLowerCase()
   const words = typed.split(/\s+/).filter(Boolean)
   const rank = (title: string) => (title.toLowerCase().startsWith(typed) ? 0 : 1)
   const entries = [
     ...noteList.value.map((n) => ({ title: n.title, path: n.path })),
-    ...[...imageList.value, ...pdfList.value, ...scriptList.value].map((path) => ({ title: baseName(path), path })),
+    ...(options.notesOnly ? [] : [...imageList.value, ...pdfList.value, ...scriptList.value]).map((path) => ({ title: baseName(path), path })),
   ]
   return entries
+    .filter((n) => n.path !== options.exclude)
     .filter((n) => words.every((word) => n.title.toLowerCase().includes(word)))
     .sort((a, b) => rank(a.title) - rank(b.title) || a.title.localeCompare(b.title))
 }
